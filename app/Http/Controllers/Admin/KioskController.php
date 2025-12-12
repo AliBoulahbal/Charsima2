@@ -19,9 +19,10 @@ class KioskController extends Controller
         $query = Kiosk::query();
         
         // Recherche
-        if ($request->has('search')) {
+        if ($request->filled('search')) { // Utilisation de filled() pour la robustesse
             $search = $request->input('search');
             $query->where(function($q) use ($search) {
+                // CORRECTION: Suppression des backslashes de fin de chaîne
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('owner_name', 'like', "%{$search}%")
                   ->orWhere('phone', 'like', "%{$search}%")
@@ -30,12 +31,12 @@ class KioskController extends Controller
         }
         
         // Filtre par wilaya
-        if ($request->has('wilaya')) {
+        if ($request->filled('wilaya')) { // Utilisation de filled()
             $query->where('wilaya', $request->input('wilaya'));
         }
         
         // Filtre par statut
-        if ($request->has('status')) {
+        if ($request->filled('status')) { // Utilisation de filled()
             $query->where('is_active', $request->input('status') === 'active');
         }
         
@@ -51,7 +52,7 @@ class KioskController extends Controller
         $wilayas = Kiosk::select('wilaya')->distinct()->orderBy('wilaya')->pluck('wilaya');
         
         return view('admin.kiosks.index', compact('kiosks', 'wilayas'));
-    }
+    } // <-- Fin de la méthode index()
 
     /**
      * Show the form for creating a new resource.
@@ -184,15 +185,15 @@ class KioskController extends Controller
         $query = $kiosk->deliveries()->with('school');
         
         // Filtres
-        if ($request->has('date_from')) {
+        if ($request->filled('date_from')) {
             $query->whereDate('delivery_date', '>=', $request->input('date_from'));
         }
         
-        if ($request->has('date_to')) {
+        if ($request->filled('date_to')) {
             $query->whereDate('delivery_date', '<=', $request->input('date_to'));
         }
         
-        if ($request->has('type')) {
+        if ($request->filled('type')) {
             $query->where('delivery_type', $request->input('type'));
         }
         

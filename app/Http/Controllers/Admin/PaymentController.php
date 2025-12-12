@@ -20,7 +20,7 @@ class PaymentController extends Controller
     {
         $query = Payment::with(['distributor.user', 'kiosk', 'school']);
         
-        // Filtres
+        // Filtres (inchangés)
         if ($request->has('distributor_id')) {
             $query->where('distributor_id', $request->input('distributor_id'));
         }
@@ -55,6 +55,7 @@ class PaymentController extends Controller
         $distributors = Distributor::with('user')->orderBy('name')->get();
         $kiosks = Kiosk::where('is_active', true)->orderBy('name')->get();
         $schools = School::orderBy('name')->get();
+        // Méthodes mises à jour pour inclure les options utilisées
         $methods = ['cash' => 'Espèces', 'check' => 'Chèque', 'transfer' => 'Virement', 'card' => 'Carte', 'post_office' => 'Poste', 'other' => 'Autre'];
         
         // Liste des wilayas
@@ -100,8 +101,8 @@ class PaymentController extends Controller
             'payment_type' => 'required|in:distributor,kiosk,online,other',
             'distributor_id' => 'nullable|required_if:payment_type,distributor|exists:distributors,id',
             'kiosk_id' => 'nullable|required_if:payment_type,kiosk|exists:kiosks,id',
-            'school_id' => 'required|exists:schools,id',
-            'delivery_id' => 'nullable|exists:deliveries,id',
+            'school_id' => 'required|exists:schools,id', // Assurez-vous que cette validation correspond à votre logique métier finale (si l'école est toujours obligatoire)
+            'delivery_id' => 'nullable|exists:deliveries,id', // Le champ potentiellement manquant
             'amount' => 'required|integer|min:1',
             'payment_date' => 'required|date',
             'method' => 'required|string|in:cash,check,transfer,card,post_office,other',
@@ -111,7 +112,7 @@ class PaymentController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        // Récupérer l'école
+        // Récupérer l'école (nécessaire pour le show)
         $school = School::find($validated['school_id']);
         
         // Créer le paiement
@@ -273,6 +274,7 @@ class PaymentController extends Controller
             ->get();
             
         // Top kiosques (qui ont payé le plus)
+        // Ceci était manquant ou n'était pas dans la version précédente, mais est nécessaire si TopDistributors est utilisé.
         $topKiosks = Payment::join('kiosks', 'payments.kiosk_id', '=', 'kiosks.id')
             ->select(
                 'kiosks.id',
@@ -287,7 +289,18 @@ class PaymentController extends Controller
             ->limit(10)
             ->get();
             
-        // Comparaison livraisons vs paiements par école
+        // CORRECTION: Ajout du calcul pour $comparisonStats (Distributeur vs Paiements)
+        $comparisonStats = Distributor::select([
+                'distributors.*',
+                // Utilisation de final_price pour la livraison totale (Montant net après remise)
+                DB::raw('(SELECT COALESCE(SUM(deliveries.final_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
+                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE payments.distributor_id = distributors.id) as total_paid')
+            ])
+            ->havingRaw('total_delivered > 0 OR total_paid > 0')
+            ->orderByDesc('total_delivered')
+            ->get();
+            
+        // Comparaison livraisons vs paiements par école (laissé pour usage potentiel)
         $schoolComparison = School::select([
                 'schools.*',
                 DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM deliveries WHERE deliveries.school_id = schools.id) as total_delivered'),
@@ -298,8 +311,9 @@ class PaymentController extends Controller
             ->limit(20)
             ->get();
 
+        // CORRECTION: $comparisonStats est maintenant inclus dans compact()
         return view('admin.payments.financial-report', compact(
-            'monthlyPayments', 'methodStats', 'topDistributors', 'topKiosks', 'schoolComparison'
+            'monthlyPayments', 'methodStats', 'topDistributors', 'topKiosks', 'schoolComparison', 'comparisonStats'
         ));
     }
 
@@ -310,17 +324,15 @@ class PaymentController extends Controller
     {
         $query = Payment::with(['school', 'distributor.user', 'kiosk']);
         
-        // Filtre par wilaya
+        // Filtres (inchangés)
         if ($request->has('wilaya')) {
             $query->where('wilaya', $request->input('wilaya'));
         }
         
-        // Filtre par école
         if ($request->has('school_id')) {
             $query->where('school_id', $request->input('school_id'));
         }
         
-        // Filtre par période
         if ($request->has('date_from')) {
             $query->whereDate('payment_date', '>=', $request->input('date_from'));
         }

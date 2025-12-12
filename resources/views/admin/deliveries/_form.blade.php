@@ -1,11 +1,10 @@
 @csrf
 
-@if(isset($delivery))
+@if(isset($delivery) && $delivery->exists)
     @method('PUT')
 @endif
 
 <div class="row">
-    <!-- Type de livraison -->
     <div class="col-md-4">
         <div class="mb-3">
             <label for="delivery_type" class="form-label">Type de livraison *</label>
@@ -32,8 +31,7 @@
         </div>
     </div>
 
-    <!-- École -->
-    <div class="col-md-4">
+    <div class="col-md-4" id="school_field_container">
         <div class="mb-3">
             <label for="school_id" class="form-label">École *</label>
             <select class="form-select @error('school_id') is-invalid @enderror" 
@@ -53,13 +51,12 @@
         </div>
     </div>
 
-    <!-- Date -->
     <div class="col-md-4">
         <div class="mb-3">
             <label for="delivery_date" class="form-label">Date *</label>
             <input type="date" class="form-control @error('delivery_date') is-invalid @enderror" 
                    id="delivery_date" name="delivery_date" 
-                   value="{{ old('delivery_date', $delivery->delivery_date ?? date('Y-m-d')) }}" required>
+                   value="{{ old('delivery_date', $delivery->delivery_date?->format('Y-m-d') ?? date('Y-m-d')) }}" required>
             @error('delivery_date')
                 <div class="invalid-feedback">{{ $message }}</div>
             @enderror
@@ -67,7 +64,6 @@
     </div>
 </div>
 
-<!-- Champs conditionnels -->
 <div id="distributor_fields" class="row">
     <div class="col-md-6">
         <div class="mb-3">
@@ -89,6 +85,7 @@
     </div>
 </div>
 
+{{-- LE CHAMP KIOSQUE EST MAINTENANT POPULÉ AVEC $kiosks --}}
 <div id="kiosk_fields" class="row" style="display: none;">
     <div class="col-md-6">
         <div class="mb-3">
@@ -96,6 +93,7 @@
             <select class="form-select @error('kiosk_id') is-invalid @enderror" 
                     id="kiosk_id" name="kiosk_id">
                 <option value="">Sélectionner un kiosque</option>
+                {{-- Boucle mise à jour pour utiliser la variable $kiosks --}}
                 @foreach($kiosks ?? [] as $kiosk)
                 <option value="{{ $kiosk->id }}" 
                         {{ old('kiosk_id', $delivery->kiosk_id ?? '') == $kiosk->id ? 'selected' : '' }}>
@@ -110,7 +108,6 @@
     </div>
 </div>
 
-<!-- Informations client -->
 <div id="client_fields" class="row" style="display: none;">
     <div class="col-md-6">
         <div class="mb-3">
@@ -158,7 +155,6 @@
     </div>
 </div>
 
-<!-- Informations enseignant -->
 <div id="teacher_fields" class="row" style="display: none;">
     <div class="col-md-6">
         <div class="mb-3">
@@ -185,7 +181,6 @@
 </div>
 
 <div class="row">
-    <!-- Quantité -->
     <div class="col-md-3">
         <div class="mb-3">
             <label for="quantity" class="form-label">Quantité *</label>
@@ -199,7 +194,6 @@
         </div>
     </div>
 
-    <!-- Prix unitaire -->
     <div class="col-md-3">
         <div class="mb-3">
             <label for="unit_price" class="form-label">Prix unitaire (DA) *</label>
@@ -213,13 +207,12 @@
         </div>
     </div>
 
-    <!-- Discount -->
     <div class="col-md-3">
         <div class="mb-3">
             <label for="discount_percentage" class="form-label">Remise (%)</label>
             <div class="input-group">
                 <input type="number" class="form-control @error('discount_percentage') is-invalid @enderror" 
-                       id="discount_percentage" name="discount_percentage" min="0" max="30" step="0.5"
+                       id="discount_percentage" name="discount_percentage" min="0" max="100" step="0.5"
                        value="{{ old('discount_percentage', $delivery->discount_percentage ?? 0) }}"
                        onchange="calculateTotal()">
                 <span class="input-group-text">%</span>
@@ -227,11 +220,10 @@
                     <div class="invalid-feedback">{{ $message }}</div>
                 @enderror
             </div>
-            <small class="form-text text-muted">0-30% (100% pour enseignants)</small>
+            <small class="form-text text-muted">Max 30% (forcé à 100% pour enseignants)</small>
         </div>
     </div>
 
-    <!-- Prix calculés -->
     <div class="col-md-3">
         <div class="card bg-light">
             <div class="card-body p-3">
@@ -256,7 +248,6 @@
     </div>
 </div>
 
-<!-- Notes -->
 <div class="mb-3">
     <label for="notes" class="form-label">Notes</label>
     <textarea class="form-control @error('notes') is-invalid @enderror" 
@@ -272,11 +263,7 @@
     </a>
     <button type="submit" class="btn btn-primary">
         <i class="fas fa-save"></i> 
-        @if(isset($delivery))
-            Mettre à jour
-        @else
-            Créer la livraison
-        @endif
+        {{ (isset($delivery) && $delivery->exists) ? 'Mettre à jour' : 'Créer la livraison' }}
     </button>
 </div>
 
@@ -285,33 +272,85 @@
 function toggleDeliveryFields() {
     const type = document.getElementById('delivery_type').value;
     
-    // Masquer tous les champs conditionnels
+    // Éléments du champ École
+    const schoolContainer = document.getElementById('school_field_container');
+    const schoolSelect = document.getElementById('school_id');
+    const schoolLabel = schoolContainer.querySelector('label');
+    
+    // Éléments Kiosque/Distributeur
+    const kioskSelect = document.getElementById('kiosk_id');
+    const distributorSelect = document.getElementById('distributor_id');
+
+    // Masquer tous les champs conditionnels et réinitialiser la remise
     document.getElementById('distributor_fields').style.display = 'none';
     document.getElementById('kiosk_fields').style.display = 'none';
     document.getElementById('client_fields').style.display = 'none';
     document.getElementById('teacher_fields').style.display = 'none';
     
-    // Afficher les champs appropriés
-    switch(type) {
-        case 'school':
-            document.getElementById('distributor_fields').style.display = 'block';
-            break;
-        case 'kiosk':
+    document.getElementById('discount_percentage').readOnly = false;
+    if (type !== 'teacher_free') {
+        document.getElementById('discount_percentage').value = 0; 
+    }
+    
+    // Réinitialisation des champs ID (pour ne pas envoyer de données croisées)
+    schoolSelect.value = "";
+    distributorSelect.value = "";
+    kioskSelect.value = "";
+    
+    // Logique d'activation/désactivation du champ École
+    if (type === 'school') {
+        // Rendre l'école visible, obligatoire et activée
+        schoolContainer.style.display = 'block';
+        schoolSelect.setAttribute('required', 'required');
+        schoolSelect.disabled = false;
+        schoolLabel.textContent = 'École *';
+        
+        // Afficher le champ Distributeur
+        document.getElementById('distributor_fields').style.display = 'block';
+        
+        // Rendre le distributeur obligatoire
+        distributorSelect.setAttribute('required', 'required');
+        kioskSelect.removeAttribute('required'); // S'assurer que Kiosque est facultatif
+
+    } else {
+        // Rendre l'école invisible, NON obligatoire et désactivée
+        schoolContainer.style.display = 'none';
+        schoolSelect.removeAttribute('required');
+        schoolSelect.disabled = true;
+        
+        // Champs secondaires
+        if (type === 'kiosk') {
             document.getElementById('kiosk_fields').style.display = 'block';
             document.getElementById('client_fields').style.display = 'block';
-            break;
-        case 'online':
+            kioskSelect.setAttribute('required', 'required'); // Kiosque obligatoire
+            distributorSelect.removeAttribute('required'); // Distributeur facultatif
+
+        } else if (type === 'online') {
             document.getElementById('client_fields').style.display = 'block';
-            break;
-        case 'teacher_free':
-            document.getElementById('client_fields').style.display = 'block';
+            kioskSelect.removeAttribute('required');
+            distributorSelect.removeAttribute('required');
+
+        } else if (type === 'teacher_free') {
             document.getElementById('teacher_fields').style.display = 'block';
-            // Forcer le discount à 100%
+            document.getElementById('client_fields').style.display = 'block';
+            
+            // L'école est nécessaire pour le type enseignant (pour rattacher)
+            schoolContainer.style.display = 'block';
+            schoolSelect.setAttribute('required', 'required');
+            schoolSelect.disabled = false;
+            
+            // Forcer le discount à 100% et le rendre non modifiable
             document.getElementById('discount_percentage').value = 100;
             document.getElementById('discount_percentage').readOnly = true;
-            break;
-        default:
-            document.getElementById('discount_percentage').readOnly = false;
+            
+            kioskSelect.removeAttribute('required');
+            distributorSelect.removeAttribute('required');
+
+        } else {
+            // Type non sélectionné
+            kioskSelect.removeAttribute('required');
+            distributorSelect.removeAttribute('required');
+        }
     }
     
     calculateTotal();
@@ -348,7 +387,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Auto-remplir la wilaya du client selon l'école sélectionnée
     document.getElementById('school_id').addEventListener('change', function() {
         const selectedOption = this.options[this.selectedIndex];
-        const wilaya = selectedOption.getAttribute('data-wilaya');
+        const wilaya = selectedOption ? selectedOption.getAttribute('data-wilaya') : '';
         document.getElementById('wilaya').value = wilaya || '';
     });
 });

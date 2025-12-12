@@ -21,7 +21,10 @@ Route::middleware(['auth', Role::class . ':admin,super_admin'])->prefix('admin')
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     // Users Management
+
     Route::resource('users', UserController::class);
+    Route::post('users/{user}/assign-role', [UserController::class, 'assignRole'])
+    ->name('users.assign-role');
 
     // Schools Management
     Route::get('schools/export', [SchoolController::class, 'export'])->name('schools.export');

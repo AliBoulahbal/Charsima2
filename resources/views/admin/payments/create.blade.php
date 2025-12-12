@@ -170,7 +170,7 @@
                     <div class="mb-3">
                         <label for="amount" class="form-label">Montant (DA) *</label>
                         <input type="number" class="form-control @error('amount') is-invalid @enderror" 
-                               id="amount" name="amount" min="1" step="50"
+                               id="amount" name="amount" min="1" step="1"
                                value="{{ old('amount') }}" required>
                         @error('amount')
                             <div class="invalid-feedback">{{ $message }}</div>

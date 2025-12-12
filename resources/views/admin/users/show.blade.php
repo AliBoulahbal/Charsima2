@@ -15,7 +15,6 @@
 
 @section('content')
 <div class="row">
-    <!-- Informations utilisateur -->
     <div class="col-md-8">
         <div class="card shadow mb-4">
             <div class="card-header bg-primary text-white">
@@ -36,6 +35,11 @@
                             <tr>
                                 <th>Téléphone:</th>
                                 <td>{{ $user->phone ?? 'N/A' }}</td>
+                            </tr>
+                            {{-- AJOUT : Affichage de la Wilaya via l'accessor du modèle User --}}
+                            <tr>
+                                <th>Wilaya (rattachée):</th>
+                                <td>{{ $user->wilaya ?? 'N/A' }}</td>
                             </tr>
                         </table>
                     </div>
@@ -63,7 +67,6 @@
             </div>
         </div>
 
-        <!-- Rôles et permissions -->
         <div class="card shadow mb-4">
             <div class="card-header bg-info text-white">
                 <h5 class="mb-0"><i class="fas fa-user-shield me-2"></i> Rôles et Permissions</h5>
@@ -76,6 +79,7 @@
                             @foreach($user->getRoleNames() as $role)
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 {{ $role }}
+                                {{-- CORRECTION : Maintien de la route pour désassigner le rôle --}}
                                 <form action="{{ route('admin.users.assign-role', $user) }}" method="POST" class="d-inline">
                                     @csrf
                                     <input type="hidden" name="role" value="{{ $role }}">
@@ -106,9 +110,8 @@
         </div>
     </div>
 
-    <!-- Sidebar avec statistiques -->
     <div class="col-md-4">
-        <!-- Profil distributeur -->
+        
         @if($user->distributorProfile)
         <div class="card shadow mb-4">
             <div class="card-header bg-success text-white">
@@ -128,35 +131,104 @@
                         <th>Créé le:</th>
                         <td>{{ $user->distributorProfile->created_at->format('d/m/Y') }}</td>
                     </tr>
+                    <tr>
+                        <th>Voir le profil:</th>
+                        <td>
+                            <a href="{{ route('admin.distributors.show', $user->distributorProfile) }}" class="btn btn-sm btn-outline-success">
+                                <i class="fas fa-eye"></i> Détail
+                            </a>
+                        </td>
+                    </tr>
                 </table>
             </div>
         </div>
         @endif
 
-        <!-- Statistiques -->
+        {{-- AJOUT : Profil Kiosque --}}
+        @if($user->kiosk)
+        <div class="card shadow mb-4">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="fas fa-store me-2"></i> Profil Kiosque</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-borderless">
+                    <tr>
+                        <th>Nom du Kiosque:</th>
+                        <td>{{ $user->kiosk->name }}</td>
+                    </tr>
+                    <tr>
+                        <th>Wilaya:</th>
+                        <td>{{ $user->kiosk->wilaya }}</td>
+                    </tr>
+                    <tr>
+                        <th>Statut:</th>
+                        <td>
+                            <span class="badge bg-{{ $user->kiosk->is_active ? 'success' : 'secondary' }}">
+                                {{ $user->kiosk->is_active ? 'Actif' : 'Inactif' }}
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Voir le profil:</th>
+                        <td>
+                            <a href="{{ route('admin.kiosks.show', $user->kiosk) }}" class="btn btn-sm btn-outline-danger">
+                                <i class="fas fa-eye"></i> Détail
+                            </a>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        @endif
+
         <div class="card shadow">
             <div class="card-header bg-secondary text-white">
                 <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i> Statistiques</h5>
             </div>
             <div class="card-body">
                 <div class="text-center">
+                    
+                    {{-- Statistiques de livraison (si Distributeur) --}}
                     @if($user->deliveries->count() > 0)
                     <div class="mb-3">
                         <h3>{{ $user->deliveries->count() }}</h3>
                         <small class="text-muted">Livraisons</small>
                     </div>
                     <div class="mb-3">
-                        <h3>{{ number_format($user->deliveries->sum('total_price'), 0, ',', ' ') }} DA</h3>
+                        {{-- Utilisation de total_price ou final_price --}}
+                        <h3>{{ number_format($user->deliveries->sum('total_price'), 0, ',', ' ') }} DA</h3> 
                         <small class="text-muted">Montant livré</small>
                     </div>
                     @endif
                     
+                    {{-- Statistiques de paiement (si Distributeur) --}}
                     @if($user->payments->count() > 0)
                     <div>
                         <h3>{{ number_format($user->payments->sum('amount'), 0, ',', ' ') }} DA</h3>
                         <small class="text-muted">Montant payé</small>
                     </div>
                     @endif
+                    
+                    {{-- AJOUT : Calcul et affichage du solde (si Distributeur) --}}
+                    @if($user->isDistributor())
+                        @php
+                            $totalDelivered = $user->deliveries->sum('total_price');
+                            $totalPaid = $user->payments->sum('amount');
+                            $balance = $totalDelivered - $totalPaid;
+                        @endphp
+                        @if($totalDelivered > 0 || $totalPaid > 0)
+                            <div class="mt-4">
+                                <h4 class="{{ $balance > 0 ? 'text-danger' : 'text-success' }}">
+                                    {{-- Afficher la valeur absolue pour que l'utilisateur comprenne qu'il s'agit d'une dette --}}
+                                    {{ number_format(abs($balance), 0, ',', ' ') }} DA
+                                </h4>
+                                <small class="text-muted fw-bold">
+                                    {{ $balance > 0 ? 'Solde Dû' : 'Crédit' }}
+                                </small>
+                            </div>
+                        @endif
+                    @endif
+                    
                 </div>
             </div>
         </div>

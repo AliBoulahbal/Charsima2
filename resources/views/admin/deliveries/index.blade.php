@@ -119,14 +119,13 @@
         @endif
 
         <div class="table-responsive">
-            {{-- AJOUT DE L'ID UNIQUE pour l'initialisation DataTables --}}
             <table class="table table-hover datatable" id="deliveriesDataTable">
                 <thead>
                     <tr>
                         <th>ID</th>
                         <th>Date</th>
-                        <th>École</th>
-                        <th>Distributeur</th>
+                        <th>École / Type</th>
+                        <th>Partenaire</th>
                         <th>Wilaya</th>
                         <th>Quantité</th>
                         <th>Prix Unitaire</th>
@@ -143,27 +142,58 @@
                             <br>
                             <small class="text-muted">{{ $delivery->created_at->format('H:i') }}</small>
                         </td>
+                        
+                        {{-- CORRECTION 1: Afficher l'école ou le type si non applicable --}}
                         <td>
-                            <a href="{{ route('admin.schools.show', $delivery->school) }}">
-                                {{ $delivery->school->name }}
-                            </a>
-                            <br>
-                            <small class="text-muted">{{ $delivery->school->wilaya }}</small>
+                            @if($delivery->school)
+                                <a href="{{ route('admin.schools.show', $delivery->school) }}">
+                                    {{ $delivery->school->name }}
+                                </a>
+                            @else
+                                <span class="badge bg-secondary">{{ $delivery->delivery_type_formatted ?? $delivery->delivery_type }}</span>
+                            @endif
                         </td>
+                        
+                        {{-- CORRECTION 2: Afficher Distributeur, Kiosque ou Vente Directe --}}
                         <td>
-                            <a href="{{ route('admin.distributors.show', $delivery->distributor) }}">
-                                {{ $delivery->distributor->user->name ?? $delivery->distributor->name }}
-                            </a>
+                            @if($delivery->distributor)
+                                <a href="{{ route('admin.distributors.show', $delivery->distributor) }}">
+                                    {{ $delivery->distributor->user->name ?? $delivery->distributor->name }}
+                                </a>
+                            @elseif($delivery->kiosk)
+                                <span class="text-muted">Kiosque: </span>
+                                <a href="{{ route('admin.kiosks.show', $delivery->kiosk) }}">
+                                    {{ $delivery->kiosk->name }}
+                                </a>
+                            @elseif($delivery->delivery_type === 'online')
+                                <span class="text-muted">Vente en ligne</span>
+                            @elseif($delivery->delivery_type === 'teacher_free')
+                                <span class="text-muted">Enseignant</span>
+                            @else
+                                N/A
+                            @endif
                         </td>
+                        
+                        {{-- CORRECTION 3: Afficher Wilaya de l'école/client/kiosque --}}
                         <td>
-                            <span class="badge bg-info">{{ $delivery->school->wilaya }}</span>
+                            @if($delivery->school)
+                                <span class="badge bg-info">{{ $delivery->school->wilaya }} (École)</span>
+                            @elseif($delivery->kiosk)
+                                <span class="badge bg-info">{{ $delivery->kiosk->wilaya }} (Kiosque)</span>
+                            @elseif($delivery->wilaya)
+                                <span class="badge bg-info">{{ $delivery->wilaya }} (Client)</span>
+                            @else
+                                N/A
+                            @endif
                         </td>
+                        
                         <td>
                             <span class="badge bg-secondary">{{ number_format($delivery->quantity) }}</span>
                         </td>
                         <td>{{ number_format($delivery->unit_price, 0, ',', ' ') }} DA</td>
                         <td>
                             <span class="fw-bold text-success">
+                                {{-- Utiliser final_price si c'est la valeur réelle payée (Mettre à jour si le modèle utilise final_price pour les statistiques) --}}
                                 {{ number_format($delivery->total_price, 0, ',', ' ') }} DA
                             </span>
                         </td>
@@ -189,7 +219,6 @@
                         </td>
                     </tr>
                     @empty
-                    {{-- AJOUTER dataTables_empty pour aider DataTables à ignorer cette ligne --}}
                     <tr class="dataTables_empty">
                         <td colspan="9" class="text-center">
                             <div class="py-4 text-muted">
@@ -209,10 +238,6 @@
     </div>
 </div>
 @endsection
-
-<table class="table table-hover datatable" id="deliveriesDataTable">
-</table>
-
 
 @push('scripts')
 <script>

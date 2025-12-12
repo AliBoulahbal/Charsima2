@@ -8,20 +8,12 @@ use App\Models\Payment;
 use App\Models\User;
 use App\Models\School;
 use App\Models\Distributor;
-use App\Models\Kiosk; // <-- AJOUT DE L'IMPORT KIOSK
+use App\Models\Kiosk; // Importé si ce n'est pas déjà fait
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
 class DashboardController extends Controller
 {
-    /**
-     * Le constructeur est vide car le middleware est géré au niveau des routes.
-     */
-    public function __construct()
-    {
-        // Le middleware d'authentification et de rôle est géré dans routes/web.php
-    }
-
     /**
      * Affiche le tableau de bord de l'administration.
      */
@@ -31,15 +23,15 @@ class DashboardController extends Controller
             // 1. Statistiques globales
             $totalDeliveries = Delivery::count();
             $totalCards = Delivery::sum('quantity');
-            $totalExpected = Delivery::sum('total_price');
+            $totalExpected = Delivery::sum('total_price'); // Total avant remise
             $totalPaid = Payment::sum('amount');
             $remaining = $totalExpected - $totalPaid;
 
             $distributorCount = User::where('role', 'distributor')->count();
             $schoolCount = School::count();
-            $kioskCount = Kiosk::count(); // <-- CALCUL DU NOMBRE TOTAL DE KIOSQUES
+            $kioskCount = Kiosk::count(); // Ajouté si le modèle Kiosk est utilisé
 
-            // 2. Top Distributeurs (calculé avec les totaux dans la requête)
+            // 2. Top Distributeurs (inchangé)
             $topDistributors = Distributor::with(['user', 'deliveries'])
                 ->select([
                     'distributors.*',
@@ -50,12 +42,11 @@ class DashboardController extends Controller
                 ->orderByDesc('deliveries_count')
                 ->limit(10)
                 ->get()
-                // Calculer le solde dû après la récupération des données
                 ->map(fn($distributor) => 
                     tap($distributor, fn($d) => $d->total_due = ($d->total_delivered ?? 0) - ($d->total_paid ?? 0))
                 );
 
-            // 3. Top Écoles (calculé avec les totaux dans la requête)
+            // 3. Top Écoles (inchangé)
             $topSchools = School::withCount('deliveries')
                 ->addSelect([
                     'total_delivered' => Delivery::selectRaw('COALESCE(SUM(total_price), 0)')
@@ -66,12 +57,13 @@ class DashboardController extends Controller
                 ->get();
 
             // 4. Dernières Livraisons
-            $recentDeliveries = Delivery::with(['school', 'distributor.user'])
+            // CORRECTION: Ajout de 'kiosk' au with()
+            $recentDeliveries = Delivery::with(['school', 'distributor.user', 'kiosk'])
                 ->orderByDesc('delivery_date')
                 ->limit(10)
                 ->get();
 
-            // 5. Statistiques par Wilaya (Distributeurs)
+            // 5. Statistiques par Wilaya (inchangé)
             $wilayaStats = Distributor::select('wilaya', DB::raw('COUNT(*) as distributor_count'))
                 ->groupBy('wilaya')
                 ->orderByDesc('distributor_count')
@@ -79,13 +71,13 @@ class DashboardController extends Controller
 
             return view('admin.dashboard', compact(
                 'totalCards', 'totalDeliveries', 'totalExpected', 'totalPaid', 'remaining',
-                'distributorCount', 'schoolCount', 'kioskCount', // <-- TRANSMISSION DE LA NOUVELLE VARIABLE
+                'distributorCount', 'schoolCount', 'kioskCount',
                 'topDistributors', 'topSchools',
                 'recentDeliveries', 'wilayaStats'
             ));
 
         } catch (\Exception $e) {
-            // ... (Gestion des erreurs)
+            // Logique de gestion des erreurs (inchangée)
             return view('admin.dashboard', [
                 'totalCards' => 0,
                 'totalDeliveries' => 0,
@@ -94,7 +86,7 @@ class DashboardController extends Controller
                 'remaining' => 0,
                 'distributorCount' => 0,
                 'schoolCount' => 0,
-                'kioskCount' => 0, // <-- Assurer que la variable est présente même en cas d'erreur
+                'kioskCount' => 0,
                 'topDistributors' => collect([]),
                 'topSchools' => collect([]),
                 'recentDeliveries' => collect([]),

@@ -142,8 +142,8 @@
                             <thead>
                                 <tr>
                                     <th>Date</th>
-                                    <th>École</th>
-                                    <th>Distributeur</th>
+                                    <th>École / Type</th>
+                                    <th>Partenaire</th>
                                     <th>Quantité</th>
                                     <th>Montant</th>
                                 </tr>
@@ -152,10 +152,36 @@
                                 @foreach($recentDeliveries as $delivery)
                                 <tr>
                                     <td>{{ $delivery->delivery_date->format('d/m/Y') }}</td>
-                                    <td>{{ $delivery->school->name }}</td>
-                                    <td>{{ $delivery->distributor->user->name ?? $delivery->distributor->name }}</td>
+                                    
+                                    {{-- CORRECTION 1: Rendre l'accès à l'école conditionnel (Résout l'erreur) --}}
+                                    <td>
+                                        @if($delivery->school)
+                                            {{ $delivery->school->name }}
+                                        @else
+                                            {{-- Utilisation de l'accessor formaté --}}
+                                            <span class="badge bg-secondary">{{ $delivery->delivery_type_formatted ?? $delivery->delivery_type }}</span>
+                                        @endif
+                                    </td>
+                                    
+                                    {{-- CORRECTION 2: Afficher Distributeur, Kiosque ou Client --}}
+                                    <td>
+                                        @if($delivery->distributor)
+                                            {{ $delivery->distributor->user->name ?? $delivery->distributor->name }} (Dist.)
+                                        @elseif($delivery->kiosk)
+                                            {{ $delivery->kiosk->name }} (Kiosque)
+                                        @elseif($delivery->teacher_name)
+                                            {{ $delivery->teacher_name }} (Client)
+                                        @else
+                                            N/A
+                                        @endif
+                                    </td>
                                     <td>{{ number_format($delivery->quantity) }}</td>
-                                    <td>{{ number_format($delivery->total_price, 0, ',', ' ') }} DA</td>
+                                    {{-- CORRECTION 3: Utiliser final_price (Montant après remise) --}}
+                                    <td>
+                                        <span class="fw-bold text-success">
+                                            {{ number_format($delivery->final_price, 0, ',', ' ') }} DA
+                                        </span>
+                                    </td>
                                 </tr>
                                 @endforeach
                             </tbody>
@@ -163,7 +189,6 @@
                     </div>
                 </div>
             </div>
-        </div>
         
         <div class="col-lg-4">
             <div class="card shadow mb-4">
