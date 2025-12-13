@@ -21,7 +21,6 @@ Route::middleware(['auth', Role::class . ':admin,super_admin'])->prefix('admin')
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     // Users Management
-
     Route::resource('users', UserController::class);
     Route::post('users/{user}/assign-role', [UserController::class, 'assignRole'])
     ->name('users.assign-role');
@@ -29,6 +28,10 @@ Route::middleware(['auth', Role::class . ':admin,super_admin'])->prefix('admin')
     // Schools Management
     Route::get('schools/export', [SchoolController::class, 'export'])->name('schools.export');
     Route::resource('schools', SchoolController::class);
+    
+    // CORRECTION : Route pour l'API de chargement des écoles
+    Route::get('api/schools/by-wilaya', [DeliveryController::class, 'getSchoolsByWilaya'])
+    ->name('api.schools.by-wilaya'); // Le nom final est admin.api.schools.by-wilaya
 
     // Distributors Management
     Route::get('distributors/report/{distributor}', [DistributorController::class, 'financialReport'])->name('distributors.financial-report');

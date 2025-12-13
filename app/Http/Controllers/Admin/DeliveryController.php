@@ -87,9 +87,12 @@ class DeliveryController extends Controller
         $distributors = Distributor::with('user')->orderBy('name')->get();
         $kiosks = Kiosk::orderBy('name')->get(); 
         
+        // CORRECTION: Appel de la méthode manquante
+        $wilayas = $this->getWilayas(); 
+
         $delivery = new Delivery();
         
-        return view('admin.deliveries.create', compact('schools', 'distributors', 'kiosks', 'delivery'));
+        return view('admin.deliveries.create', compact('schools', 'distributors', 'kiosks', 'delivery', 'wilayas'));
     }
 
     /**
@@ -114,6 +117,7 @@ class DeliveryController extends Controller
             'wilaya' => 'nullable|string|max:100',
             'teacher_subject' => 'nullable|string|max:255',
             'teacher_email' => 'nullable|email|max:255',
+            'delivery_address' => 'nullable|string|max:500', // Ajouté pour les livraisons directes
         ];
 
         $type = $request->input('delivery_type');
@@ -129,13 +133,14 @@ class DeliveryController extends Controller
         } elseif ($type === 'online') {
             $rules['teacher_name'] = 'required|string|max:255';
             $rules['teacher_phone'] = 'required|string|max:20';
+            $rules['wilaya'] = 'required|string|max:100'; // Wilaya requise pour l'adresse de livraison
         } elseif ($type === 'teacher_free') {
             $rules['school_id'] = 'required|exists:schools,id';
             $rules['teacher_name'] = 'required|string|max:255';
             $rules['teacher_phone'] = 'required|string|max:20';
         }
         
-        // Les IDs doivent être nullable dans la base de données pour que ça passe
+        // Les IDs doivent être nullable dans la base de données
         $rules['school_id'] = $rules['school_id'] ?? 'nullable|exists:schools,id';
         $rules['distributor_id'] = $rules['distributor_id'] ?? 'nullable|exists:distributors,id';
         $rules['kiosk_id'] = $rules['kiosk_id'] ?? 'nullable|exists:kiosks,id';
@@ -154,6 +159,15 @@ class DeliveryController extends Controller
         if ($type !== 'kiosk') {
             $validated['kiosk_id'] = null;
         }
+        
+        // Mettre à jour la wilaya si l'école est sélectionnée (Wilaya prioritaire de l'école)
+        if ($validated['school_id']) {
+            $school = School::find($validated['school_id']);
+            if ($school) {
+                $validated['wilaya'] = $school->wilaya;
+            }
+        }
+
 
         Delivery::create($validated);
 
@@ -178,8 +192,9 @@ class DeliveryController extends Controller
         $schools = School::orderBy('name')->get();
         $distributors = Distributor::with('user')->orderBy('name')->get();
         $kiosks = Kiosk::orderBy('name')->get(); 
-        
-        return view('admin.deliveries.edit', compact('delivery', 'schools', 'distributors', 'kiosks'));
+        $wilayas = $this->getWilayas(); // CORRECTION: Appel de la méthode
+
+        return view('admin.deliveries.edit', compact('delivery', 'schools', 'distributors', 'kiosks', 'wilayas'));
     }
 
     /**
@@ -202,6 +217,7 @@ class DeliveryController extends Controller
             'wilaya' => 'nullable|string|max:100',
             'teacher_subject' => 'nullable|string|max:255',
             'teacher_email' => 'nullable|email|max:255',
+            'delivery_address' => 'nullable|string|max:500',
         ];
 
         $type = $request->input('delivery_type');
@@ -216,17 +232,13 @@ class DeliveryController extends Controller
         } elseif ($type === 'online') {
             $rules['teacher_name'] = 'required|string|max:255';
             $rules['teacher_phone'] = 'required|string|max:20';
+            $rules['wilaya'] = 'required|string|max:100'; 
         } elseif ($type === 'teacher_free') {
             $rules['school_id'] = 'required|exists:schools,id';
             $rules['teacher_name'] = 'required|string|max:255';
             $rules['teacher_phone'] = 'required|string|max:20';
         }
         
-        // Les IDs doivent être nullable dans la base de données
-        $rules['school_id'] = $rules['school_id'] ?? 'nullable|exists:schools,id';
-        $rules['distributor_id'] = $rules['distributor_id'] ?? 'nullable|exists:distributors,id';
-        $rules['kiosk_id'] = $rules['kiosk_id'] ?? 'nullable|exists:kiosks,id';
-
         $validated = $request->validate($rules);
         
         // Nettoyage des IDs non pertinents
@@ -240,6 +252,14 @@ class DeliveryController extends Controller
         
         if ($type !== 'kiosk') {
             $validated['kiosk_id'] = null;
+        }
+        
+        // Mettre à jour la wilaya si l'école est sélectionnée (Wilaya prioritaire de l'école)
+        if ($validated['school_id']) {
+            $school = School::find($validated['school_id']);
+            if ($school) {
+                $validated['wilaya'] = $school->wilaya;
+            }
         }
         
         $delivery->update($validated);
@@ -265,22 +285,20 @@ class DeliveryController extends Controller
     public function export(Request $request)
     {
         $filters = $request->except(['_token', 'format']); // Exclure le token et le format
-        $format = $request->input('format', 'excel'); // Défaut à excel
+        $format = $request->input('format', 'excel');
 
         if ($format === 'excel') {
             $filename = 'livraisons-' . now()->format('Ymd_His') . '.xlsx';
-            // Supposons que DeliveriesExport gère les filtres passés
+            
+            // Assurez-vous que la classe DeliveriesExport existe et applique les filtres
             return Excel::download(new DeliveriesExport($filters), $filename);
             
         } elseif ($format === 'pdf') {
-            // Pour l'export PDF (via DomPDF)
-            
-            // 1. Obtenir les données filtrées 
-            // NOTE: Vous devez créer une classe DeliveriesExport pour gérer la collection
+            // ... (logique PDF)
+            // Note: Vous devez toujours obtenir la collection en utilisant la logique de filtre
             $export = new DeliveriesExport($filters);
             $deliveries = $export->collection();
 
-            // 2. Charger la vue PDF (Assurez-vous d'avoir configuré DomPDF et créé cette vue)
             $pdf = app('dompdf.wrapper');
             $pdf->loadView('admin.deliveries.export_pdf', compact('deliveries'));
             
@@ -291,19 +309,21 @@ class DeliveryController extends Controller
         return back()->with('error', 'Format d\'exportation non supporté.');
     }
 
-
     /**
      * Statistiques des livraisons
      */
     public function statistics(Request $request)
     {
+        // ... (logique des statistiques)
+        // Code basé sur le snippet fourni (assurez-vous que toutes les jointures fonctionnent)
+        
         // 1. Statistiques par mois
         $monthlyStats = Delivery::select(
                 DB::raw('YEAR(delivery_date) as year'),
                 DB::raw('MONTH(delivery_date) as month'),
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(quantity) as total_cards'),
-                DB::raw('SUM(final_price) as total_amount') 
+                DB::raw('SUM(final_price) as total_amount')
             )
             ->whereNotNull('delivery_date')
             ->groupBy('year', 'month')
@@ -312,7 +332,7 @@ class DeliveryController extends Controller
             ->limit(12)
             ->get();
             
-        // 2. Statistiques par wilaya (Wilaya des écoles)
+        // 2. Statistiques par wilaya (basé sur l'école)
         $wilayaStats = Delivery::join('schools', 'deliveries.school_id', '=', 'schools.id')
             ->select(
                 'schools.wilaya',
@@ -352,9 +372,45 @@ class DeliveryController extends Controller
             ->limit(10)
             ->get();
 
-        // 5. Transmission à la vue
         return view('admin.deliveries.statistics', compact(
             'monthlyStats', 'wilayaStats', 'topSchools', 'topDistributors'
         ));
+    }
+    
+    /**
+     * API endpoint pour récupérer les écoles filtrées par wilaya.
+     */
+    public function getSchoolsByWilaya(Request $request)
+    {
+        $wilaya = $request->input('wilaya');
+
+        if (!$wilaya) {
+            return response()->json(['schools' => []]);
+        }
+
+        $schools = School::where('wilaya', $wilaya)
+            ->select('id', 'name', 'wilaya')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json(['schools' => $schools]);
+    }
+
+
+    /**
+     * Liste des wilayas (Helper function)
+     * CORRECTION: AJOUT DE LA MÉTHODE MANQUANTE
+     */
+    private function getWilayas()
+    {
+        return [
+            'Adrar', 'Chlef', 'Laghouat', 'Oum El Bouaghi', 'Batna', 'Béjaïa', 'Biskra', 'Béchar', 'Blida', 'Bouira',
+            'Tamanrasset', 'Tébessa', 'Tlemcen', 'Tiaret', 'Tizi Ouzou', 'Alger', 'Djelfa', 'Jijel', 'Sétif', 'Saïda',
+            'Skikda', 'Sidi Bel Abbès', 'Annaba', 'Guelma', 'Constantine', 'Médéa', 'Mostaganem', 'M\'Sila', 'Mascara',
+            'Ouargla', 'Oran', 'El Bayadh', 'Illizi', 'Bordj Bou Arréridj', 'Boumerdès', 'El Tarf', 'Tindouf', 'Tissemsilt',
+            'El Oued', 'Khenchela', 'Souk Ahras', 'Tipaza', 'Mila', 'Aïn Defla', 'Naâma', 'Aïn Témouchent', 'Ghardaïa',
+            'Relizane', 'Timimoun', 'Bordj Badji Mokhtar', 'Ouled Djellal', 'Béni Abbès', 'In Salah', 'In Guezzam',
+            'Touggourt', 'Djanet', 'El M\'Ghair', 'El Meniaa'
+        ];
     }
 }
