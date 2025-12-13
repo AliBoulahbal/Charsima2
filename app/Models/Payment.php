@@ -23,6 +23,7 @@ class Payment extends Model
         'reference_number',
         'notes',
         'confirmed_by',
+        'payment_type',
     ];
 
     protected $casts = [

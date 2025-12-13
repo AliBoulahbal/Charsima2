@@ -1,220 +1,195 @@
-@extends('layouts.admin')
-
-@section('title', 'Rapport Financier')
+@extends('admin.layouts.admin')
+@section('title', 'Rapport Financier Complet')
+@section('page-title', 'Rapport Financier des Transactions')
 
 @section('content')
 <div class="container-fluid">
     <div class="row">
         <div class="col-md-12">
-            <div class="card">
+            <div class="card shadow">
                 <div class="card-header bg-primary text-white">
-                    <h3 class="card-title mb-0">
-                        <i class="fas fa-chart-line"></i> Rapport Financier des Paiements
-                    </h3>
+                    <h5 class="mb-0"><i class="fas fa-balance-scale me-2"></i> Vue d'ensemble Financière (Globale)</h5>
                 </div>
                 <div class="card-body">
+                    
                     <div class="row mb-4">
-                        <div class="col-md-3">
-                            <div class="info-box bg-gradient-info">
+                        {{-- 1. Total Paiements --}}
+                        <div class="col-md-4">
+                            <div class="info-box bg-gradient-success">
                                 <span class="info-box-icon"><i class="fas fa-money-bill-wave"></i></span>
                                 <div class="info-box-content">
-                                    <span class="info-box-text">Total Paiements</span>
+                                    <span class="info-box-text">Total Paiements Reçus</span>
                                     <span class="info-box-number">
-                                        {{ $monthlyPayments->sum('total_amount') ? number_format($monthlyPayments->sum('total_amount'), 0, ',', ' ') : '0' }} DA
+                                        {{ number_format($totalPayments, 0, ',', ' ') }} DA
                                     </span>
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3">
-                            <div class="info-box bg-gradient-success">
-                                <span class="info-box-icon"><i class="fas fa-cash-register"></i></span>
+                        
+                        {{-- 2. Total Revenu (Livraisons) --}}
+                        <div class="col-md-4">
+                            <div class="info-box bg-gradient-info">
+                                <span class="info-box-icon"><i class="fas fa-truck-loading"></i></span>
                                 <div class="info-box-content">
-                                    <span class="info-box-text">Moyen Fréquent</span>
+                                    <span class="info-box-text">Total Montant Livré (Revenu Brut)</span>
                                     <span class="info-box-number">
-                                        @php
-                                            $topMethod = $methodStats->sortByDesc('total_amount')->first();
-                                            echo $topMethod ? ($topMethod->method == 'cash' ? 'Espèces' : 
-                                                ($topMethod->method == 'check' ? 'Chèque' : 
-                                                ($topMethod->method == 'transfer' ? 'Virement' : 'Autre'))) : 'N/A';
-                                        @endphp
+                                        {{ number_format($totalRevenue, 0, ',', ' ') }} DA
                                     </span>
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3">
-                            <div class="info-box bg-gradient-warning">
-                                <span class="info-box-icon"><i class="fas fa-users"></i></span>
+                        
+                        {{-- 3. Flux Net (Simplifié) --}}
+                        <div class="col-md-4">
+                            @php $netFlowColor = $netCashFlow >= 0 ? 'bg-gradient-success' : 'bg-gradient-danger'; @endphp
+                            <div class="info-box {{ $netFlowColor }}">
+                                <span class="info-box-icon"><i class="fas fa-exchange-alt"></i></span>
                                 <div class="info-box-content">
-                                    <span class="info-box-text">Distributeurs Actifs</span>
-                                    <span class="info-box-number">{{ $topDistributors->count() }}</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="info-box bg-gradient-danger">
-                                <span class="info-box-icon"><i class="fas fa-chart-bar"></i></span>
-                                <div class="info-box-content">
-                                    <span class="info-box-text">Période Analysée</span>
-                                    <span class="info-box-number">{{ $monthlyPayments->count() }} mois</span>
+                                    <span class="info-box-text">Flux de Trésorerie Net (Paiements - Revenu)</span>
+                                    <span class="info-box-number">
+                                        {{ number_format($netCashFlow, 0, ',', ' ') }} DA
+                                    </span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h3 class="card-title">Paiements par Mois</h3>
+                    {{-- Section: Breakdown Paiements --}}
+                    <div class="card shadow mb-4">
+                        <div class="card-header bg-secondary text-white">
+                            <h6 class="mb-0"><i class="fas fa-list-alt me-2"></i> Détail des Paiements par Source</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                @php
+                                    $paymentTypes = [
+                                        'distributor' => ['label' => 'Distributeur', 'color' => 'primary', 'amount' => $distributorPayments],
+                                        'kiosk' => ['label' => 'Kiosque', 'color' => 'warning', 'amount' => $kioskPayments],
+                                        'online' => ['label' => 'Vente en Ligne', 'color' => 'success', 'amount' => $onlinePayments],
+                                        'other' => ['label' => 'Autre / Interne', 'color' => 'secondary', 'amount' => $otherPayments],
+                                    ];
+                                @endphp
+                                @foreach($paymentTypes as $type)
+                                <div class="col-md-3">
+                                    <div class="small-box bg-{{ $type['color'] }}">
+                                        <div class="inner">
+                                            <h3>{{ number_format($type['amount'], 0, ',', ' ') }} DA</h3>
+                                            <p>{{ $type['label'] }}</p>
+                                        </div>
+                                        <div class="icon">
+                                            <i class="fas fa-tag"></i>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="card-body">
-                                    <table class="table table-bordered">
-                                        <thead>
-                                            <tr>
-                                                <th>Mois/Année</th>
-                                                <th>Nombre</th>
-                                                <th>Montant Total</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach($monthlyPayments as $month)
-                                                <tr>
-                                                    <td>{{ DateTime::createFromFormat('!m', $month->month)->format('F') }} {{ $month->year }}</td>
-                                                    <td>{{ $month->payments_count }}</td>
-                                                    <td>{{ number_format($month->total_amount, 0, ',', ' ') }} DA</td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
+                                @endforeach
                             </div>
                         </div>
-                        <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h3 class="card-title">Paiements par Méthode</h3>
-                                </div>
-                                <div class="card-body">
-                                    <table class="table table-bordered">
-                                        <thead>
-                                            <tr>
-                                                <th>Méthode</th>
-                                                <th>Nombre</th>
-                                                <th>Montant Total</th>
-                                                <th>Pourcentage</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
+                    </div>
+                    
+                    {{-- Section: Tableau Solde Distributeurs --}}
+                    <div class="card shadow mb-4">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0"><i class="fas fa-user-tie me-2"></i> Solde Détaillé des Distributeurs</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-striped table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Nom du Distributeur</th>
+                                            <th class="text-end">Wilaya</th>
+                                            <th class="text-end">Montant Livré (Dû)</th>
+                                            <th class="text-end">Montant Payé</th>
+                                            <th class="text-end">Solde Dû</th>
+                                            <th class="text-center">Taux de Paiement</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($distributorBalances as $distributor)
                                             @php
-                                                $totalAmount = $methodStats->sum('total_amount');
+                                                $delivered = $distributor->total_delivered;
+                                                $paid = $distributor->total_paid;
+                                                $balance = $delivered - $paid;
+                                                $paymentRate = $delivered > 0 ? round(($paid / $delivered) * 100) : 0;
+                                                // La couleur dépend si le solde est dû par le partenaire (balance > 0) ou si le partenaire a trop payé (balance < 0)
+                                                $balanceClass = $balance > 0 ? 'text-danger' : ($balance < 0 ? 'text-success' : 'text-secondary');
                                             @endphp
-                                            @foreach($methodStats as $method)
-                                                <tr>
-                                                    <td>
-                                                        @switch($method->method)
-                                                            @case('cash') Espèces @break
-                                                            @case('check') Chèque @break
-                                                            @case('transfer') Virement @break
-                                                            @default Autre
-                                                        @endswitch
-                                                    </td>
-                                                    <td>{{ $method->payments_count }}</td>
-                                                    <td>{{ number_format($method->total_amount, 0, ',', ' ') }} DA</td>
-                                                    <td>
-                                                        @if($totalAmount > 0)
-                                                            {{ round(($method->total_amount / $totalAmount) * 100, 2) }}%
-                                                        @else
-                                                            0%
-                                                        @endif
-                                                    </td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="row mt-4">
-                        <div class="col-md-12">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h3 class="card-title">Top 10 Distributeurs</h3>
-                                </div>
-                                <div class="card-body">
-                                    <table class="table table-bordered">
-                                        <thead>
                                             <tr>
-                                                <th>#</th>
-                                                <th>Distributeur</th>
-                                                <th>Nombre de Paiements</th>
-                                                <th>Total Payé</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach($topDistributors as $index => $distributor)
-                                                <tr>
-                                                    <td>{{ $index + 1 }}</td>
-                                                    <td>{{ $distributor->name }}</td>
-                                                    <td>{{ $distributor->payments_count }}</td>
-                                                    <td>{{ number_format($distributor->total_paid, 0, ',', ' ') }} DA</td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="row mt-4">
-                        <div class="col-md-12">
-                            <div class="card">
-                                <div class="card-header">
-                                    <h3 class="card-title">Comparaison Livraisons vs Paiements</h3>
-                                </div>
-                                <div class="card-body">
-                                    <table class="table table-bordered">
-                                        <thead>
-                                            <tr>
-                                                <th>Distributeur</th>
-                                                <th>Total Livré</th>
-                                                <th>Total Payé</th>
-                                                <th>Solde</th>
-                                                <th>Taux de Paiement</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach($comparisonStats as $distributor)
-                                                @php
-                                                    $balance = $distributor->total_paid - $distributor->total_delivered;
-                                                    $paymentRate = $distributor->total_delivered > 0 ? 
-                                                        round(($distributor->total_paid / $distributor->total_delivered) * 100, 2) : 0;
-                                                @endphp
-                                                <tr>
-                                                    <td>{{ $distributor->name }}</td>
-                                                    <td>{{ number_format($distributor->total_delivered, 0, ',', ' ') }} DA</td>
-                                                    <td>{{ number_format($distributor->total_paid, 0, ',', ' ') }} DA</td>
-                                                    <td class="{{ $balance >= 0 ? 'text-success' : 'text-danger' }}">
-                                                        {{ number_format($balance, 0, ',', ' ') }} DA
-                                                    </td>
-                                                    <td>
-                                                        <div class="progress">
-                                                            <div class="progress-bar {{ $paymentRate >= 100 ? 'bg-success' : ($paymentRate >= 50 ? 'bg-warning' : 'bg-danger') }}" 
-                                                                 style="width: {{ min($paymentRate, 100) }}%">
-                                                                {{ $paymentRate }}%
-                                                            </div>
+                                                <td>{{ $distributor->name }}</td>
+                                                <td class="text-end">{{ $distributor->wilaya }}</td>
+                                                <td class="text-end">{{ number_format($delivered, 0, ',', ' ') }} DA</td>
+                                                <td class="text-end">{{ number_format($paid, 0, ',', ' ') }} DA</td>
+                                                <td class="{{ $balanceClass }} fw-bold">
+                                                    {{ number_format($balance, 0, ',', ' ') }} DA
+                                                </td>
+                                                <td>
+                                                    <div class="progress" style="height: 18px;">
+                                                        <div class="progress-bar {{ $paymentRate >= 100 ? 'bg-success' : ($paymentRate >= 75 ? 'bg-info' : 'bg-warning') }}" 
+                                                             style="width: {{ min($paymentRate, 100) }}%">
+                                                            {{ $paymentRate }}%
                                                         </div>
-                                                    </td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
+                    
+                    {{-- Section: Tableau Solde Kiosques --}}
+                    <div class="card shadow">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0"><i class="fas fa-store me-2"></i> Solde Détaillé des Kiosques</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered table-striped table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Nom du Kiosque</th>
+                                            <th class="text-end">Wilaya</th>
+                                            <th class="text-end">Montant Livré (Dû)</th>
+                                            <th class="text-end">Montant Payé</th>
+                                            <th class="text-end">Solde Dû</th>
+                                            <th class="text-center">Taux de Paiement</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($kioskBalances as $kiosk)
+                                            @php
+                                                $delivered = $kiosk->total_delivered;
+                                                $paid = $kiosk->total_paid;
+                                                $balance = $delivered - $paid;
+                                                $paymentRate = $delivered > 0 ? round(($paid / $delivered) * 100) : 0;
+                                                // La couleur dépend si le solde est dû par le partenaire (balance > 0) ou si le partenaire a trop payé (balance < 0)
+                                                $balanceClass = $balance > 0 ? 'text-danger' : ($balance < 0 ? 'text-success' : 'text-secondary');
+                                            @endphp
+                                            <tr>
+                                                <td>{{ $kiosk->name }}</td>
+                                                <td class="text-end">{{ $kiosk->wilaya }}</td>
+                                                <td class="text-end">{{ number_format($delivered, 0, ',', ' ') }} DA</td>
+                                                <td class="text-end">{{ number_format($paid, 0, ',', ' ') }} DA</td>
+                                                <td class="{{ $balanceClass }} fw-bold">
+                                                    {{ number_format($balance, 0, ',', ' ') }} DA
+                                                </td>
+                                                <td>
+                                                    <div class="progress" style="height: 18px;">
+                                                        <div class="progress-bar {{ $paymentRate >= 100 ? 'bg-success' : ($paymentRate >= 75 ? 'bg-info' : 'bg-warning') }}" 
+                                                             style="width: {{ min($paymentRate, 100) }}%">
+                                                            {{ $paymentRate }}%
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
                 </div>
             </div>
         </div>

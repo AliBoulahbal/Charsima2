@@ -6,9 +6,12 @@
     <a href="{{ route('admin.payments.create') }}" class="btn btn-primary">
         <i class="fas fa-plus"></i> Nouveau Paiement
     </a>
-    <a href="{{ route('admin.payments.export') }}" class="btn btn-success ms-2">
+    
+    {{-- CORRECTION: Remplacement du lien Exporter par un bouton modal --}}
+    <button type="button" class="btn btn-success ms-2" data-bs-toggle="modal" data-bs-target="#exportModal">
         <i class="fas fa-download"></i> Exporter
-    </a>
+    </button>
+    
     <a href="{{ route('admin.payments.financial-report') }}" class="btn btn-info ms-2">
         <i class="fas fa-chart-pie"></i> Rapport Financier
     </a>
@@ -17,7 +20,6 @@
 @section('content')
 <div class="card shadow">
     <div class="card-body">
-        <!-- Filtres -->
         <div class="card mb-4">
             <div class="card-header bg-light">
                 <h6 class="mb-0"><i class="fas fa-filter me-2"></i> Filtres</h6>
@@ -73,7 +75,6 @@
             </div>
         </div>
 
-        <!-- Statistiques des filtres -->
         @if(request()->anyFilled(['distributor_id', 'date_from', 'date_to', 'method']))
         <div class="row mb-4">
             <div class="col-md-4">
@@ -103,14 +104,13 @@
         </div>
         @endif
 
-        <!-- Tableau -->
         <div class="table-responsive">
             <table class="table table-hover datatable">
                 <thead>
                     <tr>
                         <th>ID</th>
                         <th>Date</th>
-                        <th>Distributeur</th>
+                        <th>Distributeur/Partenaire</th>
                         <th>Wilaya</th>
                         <th>Montant</th>
                         <th>Méthode</th>
@@ -126,14 +126,35 @@
                             <br>
                             <small class="text-muted">{{ $payment->created_at->format('H:i') }}</small>
                         </td>
+                        
+                        {{-- Afficher le distributeur ou le kiosque (Logique du contrôleur) --}}
                         <td>
-                            <a href="{{ route('admin.distributors.show', $payment->distributor) }}">
-                                {{ $payment->distributor->name }}
-                            </a>
+                            @if($payment->distributor)
+                                <a href="{{ route('admin.distributors.show', $payment->distributor) }}">
+                                    {{ $payment->distributor->user?->name ?? $payment->distributor->name }}
+                                </a>
+                                <small class="text-muted d-block">Distributeur</small>
+                            @elseif($payment->kiosk)
+                                <a href="{{ route('admin.kiosks.show', $payment->kiosk) }}">
+                                    {{ $payment->kiosk->name }}
+                                </a>
+                                <small class="text-muted d-block">Kiosque</small>
+                            @else
+                                <span class="text-muted">N/A</span>
+                            @endif
                         </td>
+                        
+                        {{-- Afficher la wilaya du partenaire --}}
                         <td>
-                            <span class="badge bg-info">{{ $payment->distributor->wilaya }}</span>
+                            @if($payment->distributor)
+                                <span class="badge bg-info">{{ $payment->distributor->wilaya }}</span>
+                            @elseif($payment->kiosk)
+                                <span class="badge bg-danger">{{ $payment->kiosk->wilaya }}</span>
+                            @else
+                                <span class="badge bg-secondary">{{ $payment->wilaya ?? 'N/A' }}</span>
+                            @endif
                         </td>
+                        
                         <td>
                             <span class="fw-bold text-success">
                                 {{ number_format($payment->amount, 0, ',', ' ') }} DA
@@ -145,11 +166,17 @@
                                     'cash' => 'success',
                                     'check' => 'warning', 
                                     'transfer' => 'info',
-                                    'other' => 'secondary'
+                                    'card' => 'primary',
+                                    'post_office' => 'secondary',
+                                    'other' => 'dark'
+                                ];
+                                $methodLabels = [
+                                    'cash' => 'Espèces', 'check' => 'Chèque', 'transfer' => 'Virement', 
+                                    'card' => 'Carte', 'post_office' => 'Poste', 'other' => 'Autre'
                                 ];
                             @endphp
                             <span class="badge bg-{{ $methodColors[$payment->method] ?? 'secondary' }}">
-                                {{ $methods[$payment->method] ?? $payment->method }}
+                                {{ $methodLabels[$payment->method] ?? $payment->method }}
                             </span>
                         </td>
                         <td>
@@ -187,7 +214,6 @@
             </table>
         </div>
 
-        <!-- Pagination -->
         <div class="d-flex justify-content-center">
             {{ $payments->links() }}
         </div>
@@ -196,24 +222,65 @@
 @endsection
 
 
-<table class="table table-hover datatable" id="paymentsDataTable">
-
-</table>
+{{-- Modal d'Exportation --}}
+<div class="modal fade" id="exportModal" tabindex="-1" aria-labelledby="exportModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exportModalLabel">Exporter les Paiements</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            {{-- Le formulaire est soumis via GET pour inclure les filtres --}}
+            <form id="export-form" method="GET" action="{{ route('admin.payments.export') }}">
+                <div class="modal-body">
+                    <p>Sélectionnez le format d'exportation. **Les filtres actuellement appliqués seront conservés.**</p>
+                    <div class="mb-3">
+                        <label for="export_format" class="form-label">Format de fichier *</label>
+                        <select name="format" id="export_format" class="form-select" required>
+                            <option value="excel">Excel (.xlsx)</option>
+                            <option value="pdf">PDF (.pdf)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="submit" class="btn btn-success"><i class="fas fa-download"></i> Télécharger</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 
 @push('scripts')
 <script>
-    $(document).ready(function() {
-        var tableSelector = '#paymentsDataTable'; 
-        
-        if ( ! $.fn.DataTable.isDataTable( tableSelector ) ) {
-            $(tableSelector).DataTable({
-                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/fr-FR.json' },
-                paging: false, searching: false, ordering: false, info: false,
-                // Définition de 7 colonnes:
-                columns: [null, null, null, null, null, null, { orderable: false, searchable: false }]
-            });
+    function confirmDelete(event) {
+        if (!confirm('Êtes-vous sûr de vouloir supprimer ce paiement ? Cette action est irréversible.')) {
+            event.preventDefault();
+            return false;
         }
+        return true;
+    }
+
+    // Ajoute les paramètres de l'URL (filtres) au formulaire d'exportation
+    document.getElementById('exportModal').addEventListener('show.bs.modal', function () {
+        const form = document.getElementById('export-form');
+        // Supprimer les anciens inputs de filtres
+        form.querySelectorAll('input[name][type="hidden"]').forEach(input => input.remove());
+
+        // Récupérer les filtres actifs de l'URL
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        urlParams.forEach((value, key) => {
+            // S'assurer que le filtre a une valeur et n'est pas "format"
+            if (key !== 'format' && value) {
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = key;
+                hiddenInput.value = value;
+                form.appendChild(hiddenInput);
+            }
+        });
     });
 </script>
 @endpush

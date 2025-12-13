@@ -9,6 +9,9 @@ use App\Models\Distributor;
 use App\Models\Kiosk;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule; // Ajouté pour la validation conditionnelle
+use App\Exports\DeliveriesExport; // Assurez-vous d'importer votre classe d'exportation
+use Maatwebsite\Excel\Facades\Excel; // Nécessaire pour l'export Excel
 
 class DeliveryController extends Controller
 {
@@ -20,8 +23,7 @@ class DeliveryController extends Controller
         // Charger school, distributor, et kiosk pour l'affichage de l'index
         $query = Delivery::with(['school', 'distributor.user', 'kiosk']);
         
-        // Filtres
-        // CORRECTION : Utilisation de filled() au lieu de has() pour la sécurité des requêtes
+        // Filtres : Utilisation de filled() pour la robustesse et la sécurité
         if ($request->filled('school_id')) {
             $query->where('school_id', $request->input('school_id'));
         }
@@ -40,12 +42,18 @@ class DeliveryController extends Controller
         
         if ($request->filled('wilaya')) {
             $wilaya = $request->input('wilaya');
-            // Filtrer sur la wilaya de l'école (pour les livraisons école)
-            $query->whereHas('school', function($q) use ($wilaya) {
-                $q->where('wilaya', $wilaya);
-            })
-            // OU sur la wilaya de la livraison (pour les ventes en ligne/kiosque)
-            ->orWhere('wilaya', $wilaya); 
+            $query->where(function ($q) use ($wilaya) {
+                // Filtrer par la wilaya de l'école (livraison école)
+                $q->whereHas('school', function($q_school) use ($wilaya) {
+                    $q_school->where('wilaya', $wilaya);
+                })
+                // OU par la wilaya directement sur le modèle Delivery (kiosque/online)
+                ->orWhere('deliveries.wilaya', $wilaya);
+            });
+        }
+        
+        if ($request->filled('delivery_type')) {
+            $query->where('delivery_type', $request->input('delivery_type'));
         }
         
         $deliveries = $query->latest('delivery_date')->paginate(20);
@@ -53,17 +61,18 @@ class DeliveryController extends Controller
         // Données pour les filtres
         $schools = School::orderBy('name')->get();
         $distributors = Distributor::with('user')->orderBy('name')->get();
-        // Utiliser les wilayas des écoles et des livraisons pour les filtres
+        
+        // Collecter les wilayas uniques (pour le filtre)
         $wilayas = School::select('wilaya')->distinct()->orderBy('wilaya')->pluck('wilaya')
             ->merge(Delivery::select('wilaya')->distinct()->whereNotNull('wilaya')->pluck('wilaya'))
             ->sort()
             ->unique();
-
-        // Statistiques
+        
+        // Statistiques pour l'index
         $stats = [
             'total' => $deliveries->total(),
             'total_quantity' => $deliveries->sum('quantity'),
-            'total_amount' => $deliveries->sum('final_price'), // Utiliser final_price pour le montant réel
+            'total_amount' => $deliveries->sum('final_price'),
         ];
 
         return view('admin.deliveries.index', compact('deliveries', 'schools', 'distributors', 'wilayas', 'stats'));
@@ -109,7 +118,7 @@ class DeliveryController extends Controller
 
         $type = $request->input('delivery_type');
 
-        // Validation CONDITIONNELLE (Logique miroir au JavaScript)
+        // Validation CONDITIONNELLE
         if ($type === 'school') {
             $rules['school_id'] = 'required|exists:schools,id';
             $rules['distributor_id'] = 'required|exists:distributors,id';
@@ -125,10 +134,15 @@ class DeliveryController extends Controller
             $rules['teacher_name'] = 'required|string|max:255';
             $rules['teacher_phone'] = 'required|string|max:20';
         }
+        
+        // Les IDs doivent être nullable dans la base de données pour que ça passe
+        $rules['school_id'] = $rules['school_id'] ?? 'nullable|exists:schools,id';
+        $rules['distributor_id'] = $rules['distributor_id'] ?? 'nullable|exists:distributors,id';
+        $rules['kiosk_id'] = $rules['kiosk_id'] ?? 'nullable|exists:kiosks,id';
 
         $validated = $request->validate($rules);
         
-        // Nettoyage des IDs non pertinents (essentiel après la correction de la migration)
+        // Nettoyage des IDs non pertinents (essentiel)
         if (!in_array($type, ['school', 'teacher_free'])) {
             $validated['school_id'] = null;
         }
@@ -173,7 +187,6 @@ class DeliveryController extends Controller
      */
     public function update(Request $request, Delivery $delivery)
     {
-        // La validation et le nettoyage dans update() doivent refléter store()
         $rules = [
             'delivery_type' => 'required|in:school,kiosk,online,teacher_free',
             'delivery_date' => 'required|date',
@@ -209,6 +222,11 @@ class DeliveryController extends Controller
             $rules['teacher_phone'] = 'required|string|max:20';
         }
         
+        // Les IDs doivent être nullable dans la base de données
+        $rules['school_id'] = $rules['school_id'] ?? 'nullable|exists:schools,id';
+        $rules['distributor_id'] = $rules['distributor_id'] ?? 'nullable|exists:distributors,id';
+        $rules['kiosk_id'] = $rules['kiosk_id'] ?? 'nullable|exists:kiosks,id';
+
         $validated = $request->validate($rules);
         
         // Nettoyage des IDs non pertinents
@@ -242,22 +260,37 @@ class DeliveryController extends Controller
     }
 
     /**
-     * Export des livraisons
+     * Export des livraisons (Excel et PDF)
      */
     public function export(Request $request)
     {
-        $query = Delivery::with(['school', 'distributor.user', 'kiosk']);
-        
-        // Appliquer les mêmes filtres que l'index (en utilisant filled())
-        if ($request->filled('school_id')) {
-            $query->where('school_id', $request->input('school_id'));
+        $filters = $request->except(['_token', 'format']); // Exclure le token et le format
+        $format = $request->input('format', 'excel'); // Défaut à excel
+
+        if ($format === 'excel') {
+            $filename = 'livraisons-' . now()->format('Ymd_His') . '.xlsx';
+            // Supposons que DeliveriesExport gère les filtres passés
+            return Excel::download(new DeliveriesExport($filters), $filename);
+            
+        } elseif ($format === 'pdf') {
+            // Pour l'export PDF (via DomPDF)
+            
+            // 1. Obtenir les données filtrées 
+            // NOTE: Vous devez créer une classe DeliveriesExport pour gérer la collection
+            $export = new DeliveriesExport($filters);
+            $deliveries = $export->collection();
+
+            // 2. Charger la vue PDF (Assurez-vous d'avoir configuré DomPDF et créé cette vue)
+            $pdf = app('dompdf.wrapper');
+            $pdf->loadView('admin.deliveries.export_pdf', compact('deliveries'));
+            
+            $filename = 'livraisons-' . now()->format('Ymd_His') . '.pdf';
+            return $pdf->download($filename);
         }
-        // ... (Autres filtres)
         
-        $deliveries = $query->latest('delivery_date')->get();
-        
-        return view('admin.deliveries.export', compact('deliveries'));
+        return back()->with('error', 'Format d\'exportation non supporté.');
     }
+
 
     /**
      * Statistiques des livraisons
@@ -270,7 +303,7 @@ class DeliveryController extends Controller
                 DB::raw('MONTH(delivery_date) as month'),
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(quantity) as total_cards'),
-                DB::raw('SUM(final_price) as total_amount') // Utilisation de final_price
+                DB::raw('SUM(final_price) as total_amount') 
             )
             ->whereNotNull('delivery_date')
             ->groupBy('year', 'month')
@@ -280,13 +313,12 @@ class DeliveryController extends Controller
             ->get();
             
         // 2. Statistiques par wilaya (Wilaya des écoles)
-        // Jointure nécessaire car la wilaya de livraison est sur le modèle School
         $wilayaStats = Delivery::join('schools', 'deliveries.school_id', '=', 'schools.id')
             ->select(
                 'schools.wilaya',
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(deliveries.quantity) as total_cards'),
-                DB::raw('SUM(deliveries.final_price) as total_amount') // Utilisation de final_price
+                DB::raw('SUM(deliveries.final_price) as total_amount')
             )
             ->groupBy('schools.wilaya')
             ->orderByDesc('total_amount')
@@ -299,7 +331,7 @@ class DeliveryController extends Controller
                 'schools.name',
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(deliveries.quantity) as total_cards'),
-                DB::raw('SUM(deliveries.final_price) as total_amount') // Utilisation de final_price
+                DB::raw('SUM(deliveries.final_price) as total_amount')
             )
             ->groupBy('schools.id', 'schools.name')
             ->orderByDesc('total_amount')
@@ -313,14 +345,14 @@ class DeliveryController extends Controller
                 'distributors.name',
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(deliveries.quantity) as total_cards'),
-                DB::raw('SUM(deliveries.final_price) as total_amount') // Utilisation de final_price
+                DB::raw('SUM(deliveries.final_price) as total_amount')
             )
             ->groupBy('distributors.id', 'distributors.name')
             ->orderByDesc('total_amount')
             ->limit(10)
             ->get();
 
-        // 5. CORRECTION : Transmission de TOUTES les variables nécessaires
+        // 5. Transmission à la vue
         return view('admin.deliveries.statistics', compact(
             'monthlyStats', 'wilayaStats', 'topSchools', 'topDistributors'
         ));

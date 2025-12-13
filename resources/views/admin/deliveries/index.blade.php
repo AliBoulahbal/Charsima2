@@ -6,9 +6,26 @@
     <a href="{{ route('admin.deliveries.create') }}" class="btn btn-primary">
         <i class="fas fa-plus"></i> Nouvelle Livraison
     </a>
-    <a href="{{ route('admin.deliveries.export') }}" class="btn btn-success ms-2">
-        <i class="fas fa-download"></i> Exporter
-    </a>
+    
+    {{-- CORRECTION: Remplacement du lien Exporter par le menu déroulant --}}
+    <div class="dropdown ms-2">
+        <button class="btn btn-success dropdown-toggle" type="button" id="exportDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="fas fa-download"></i> Exporter
+        </button>
+        <ul class="dropdown-menu" aria-labelledby="exportDropdown">
+            <li>
+                <a class="dropdown-item" href="{{ route('admin.deliveries.export', array_merge(request()->query(), ['format' => 'excel'])) }}">
+                    <i class="fas fa-file-excel me-2"></i> Excel (.xlsx)
+                </a>
+            </li>
+            <li>
+                <a class="dropdown-item" href="{{ route('admin.deliveries.export', array_merge(request()->query(), ['format' => 'pdf'])) }}">
+                    <i class="fas fa-file-pdf me-2"></i> PDF
+                </a>
+            </li>
+        </ul>
+    </div>
+    
     <a href="{{ route('admin.deliveries.statistics') }}" class="btn btn-info ms-2">
         <i class="fas fa-chart-bar"></i> Statistiques
     </a>
@@ -143,7 +160,7 @@
                             <small class="text-muted">{{ $delivery->created_at->format('H:i') }}</small>
                         </td>
                         
-                        {{-- CORRECTION 1: Afficher l'école ou le type si non applicable --}}
+                        {{-- Afficher l'école ou le type si non applicable --}}
                         <td>
                             @if($delivery->school)
                                 <a href="{{ route('admin.schools.show', $delivery->school) }}">
@@ -154,7 +171,7 @@
                             @endif
                         </td>
                         
-                        {{-- CORRECTION 2: Afficher Distributeur, Kiosque ou Vente Directe --}}
+                        {{-- Afficher Distributeur, Kiosque ou Vente Directe --}}
                         <td>
                             @if($delivery->distributor)
                                 <a href="{{ route('admin.distributors.show', $delivery->distributor) }}">
@@ -174,7 +191,7 @@
                             @endif
                         </td>
                         
-                        {{-- CORRECTION 3: Afficher Wilaya de l'école/client/kiosque --}}
+                        {{-- Afficher Wilaya de l'école/client/kiosque --}}
                         <td>
                             @if($delivery->school)
                                 <span class="badge bg-info">{{ $delivery->school->wilaya }} (École)</span>
@@ -193,7 +210,7 @@
                         <td>{{ number_format($delivery->unit_price, 0, ',', ' ') }} DA</td>
                         <td>
                             <span class="fw-bold text-success">
-                                {{-- Utiliser final_price si c'est la valeur réelle payée (Mettre à jour si le modèle utilise final_price pour les statistiques) --}}
+                                {{-- Utilisation de total_price dans cette vue, mais la logique du contrôleur utilise final_price pour les stats --}}
                                 {{ number_format($delivery->total_price, 0, ',', ' ') }} DA
                             </span>
                         </td>
@@ -241,16 +258,28 @@
 
 @push('scripts')
 <script>
+    function confirmDelete(event) {
+        if (!confirm('Êtes-vous sûr de vouloir supprimer cette livraison ? Cette action est irréversible.')) {
+            event.preventDefault();
+            return false;
+        }
+        return true;
+    }
+
     $(document).ready(function() {
         var tableSelector = '#deliveriesDataTable'; 
         
-        if ( ! $.fn.DataTable.isDataTable( tableSelector ) ) {
-            $(tableSelector).DataTable({
-                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/fr-FR.json' },
-                paging: false, searching: false, ordering: false, info: false,
-                // Définition de 9 colonnes:
-                columns: [null, null, null, null, null, null, null, null, { orderable: false, searchable: false }]
-            });
+        // Laisser les fonctions DataTables gérées par le framework ou le setup global
+        // Si vous utilisez la pagination Laravel, DataTables est généralement désactivé pour éviter les conflits.
+        if ($.fn.DataTable) {
+            if ( ! $.fn.DataTable.isDataTable( tableSelector ) ) {
+                $(tableSelector).DataTable({
+                    language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/fr-FR.json' },
+                    paging: false, searching: false, ordering: false, info: false,
+                    // Définition de 9 colonnes:
+                    columns: [null, null, null, null, null, null, null, null, { orderable: false, searchable: false }]
+                });
+            }
         }
     });
 </script>
