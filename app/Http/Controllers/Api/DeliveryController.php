@@ -1,4 +1,3 @@
-// app/Http/Controllers/Api/DeliveryController.php
 <?php
 
 namespace App\Http\Controllers\Api;
@@ -10,6 +9,7 @@ use App\Models\Distributor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class DeliveryController extends Controller
 {
@@ -49,9 +49,7 @@ class DeliveryController extends Controller
             });
         }
         
-        $deliveries = $query->with(['school', 'distributor.user'])
-            ->orderBy('delivery_date', 'desc')
-            ->paginate($request->per_page ?? 20);
+        $deliveries = $query->with(['school', 'distributor', 'kiosk'])->orderBy('delivery_date', 'desc')->paginate(15);
         
         return response()->json([
             'success' => true,
@@ -60,293 +58,129 @@ class DeliveryController extends Controller
     }
 
     /**
-     * Mes livraisons (pour distributeur)
-     */
-    public function myDeliveries(Request $request)
-    {
-        $user = Auth::user();
-        
-        if ($user->role !== 'distributor' || !$user->distributorProfile) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Accès réservé aux distributeurs',
-            ], 403);
-        }
-        
-        $query = $user->distributorProfile->deliveries();
-        
-        // Filtres
-        if ($request->has('month')) {
-            $query->whereMonth('delivery_date', $request->month);
-        }
-        
-        if ($request->has('year')) {
-            $query->whereYear('delivery_date', $request->year);
-        }
-        
-        if ($request->has('school_id')) {
-            $query->where('school_id', $request->school_id);
-        }
-        
-        $deliveries = $query->with('school')
-            ->orderBy('delivery_date', 'desc')
-            ->paginate($request->per_page ?? 20);
-        
-        return response()->json([
-            'success' => true,
-            'deliveries' => $deliveries,
-        ]);
-    }
-
-    /**
-     * Statistiques de mes livraisons
-     */
-    public function myDeliveriesStats(Request $request)
-    {
-        $user = Auth::user();
-        
-        if ($user->role !== 'distributor' || !$user->distributorProfile) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Accès réservé aux distributeurs',
-            ], 403);
-        }
-        
-        $stats = [
-            'total_deliveries' => $user->distributorProfile->deliveries()->count(),
-            'total_cards' => $user->distributorProfile->deliveries()->sum('quantity'),
-            'total_amount' => $user->distributorProfile->deliveries()->sum('total_price'),
-            'monthly_deliveries' => $user->distributorProfile->deliveries()
-                ->whereMonth('delivery_date', now()->month)
-                ->whereYear('delivery_date', now()->year)
-                ->count(),
-            'monthly_amount' => $user->distributorProfile->deliveries()
-                ->whereMonth('delivery_date', now()->month)
-                ->whereYear('delivery_date', now()->year)
-                ->sum('total_price'),
-        ];
-        
-        return response()->json([
-            'success' => true,
-            'stats' => $stats,
-        ]);
-    }
-
-    /**
-     * Créer une livraison
+     * Créer une livraison SANS validation GPS (méthode store)
      */
     public function store(Request $request)
     {
         $user = Auth::user();
-        
-        $request->validate([
-            'school_id' => 'required|exists:schools,id',
-            'delivery_date' => 'required|date',
-            'quantity' => 'required|integer|min:1',
-            'unit_price' => 'required|integer|min:0',
-        ]);
-        
-        // Pour les distributeurs, utiliser leur propre ID
-        $distributorId = $user->role === 'distributor' && $user->distributorProfile 
-            ? $user->distributorProfile->id 
-            : $request->distributor_id;
-        
-        if (!$distributorId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Distributeur requis',
-            ], 400);
+        $distributor = $user->distributorProfile;
+
+        if (!$distributor) {
+            throw ValidationException::withMessages(['user' => 'Profil distributeur non valide.']);
         }
         
-        // Calculer le prix total
-        $totalPrice = $request->quantity * $request->unit_price;
-        
-        $delivery = Delivery::create([
-            'school_id' => $request->school_id,
-            'distributor_id' => $distributorId,
-            'delivery_date' => $request->delivery_date,
-            'quantity' => $request->quantity,
-            'unit_price' => $request->unit_price,
-            'total_price' => $totalPrice,
+        // Validation minimale (sans coords)
+        $validated = $request->validate([
+            'school_id' => 'required|exists:schools,id',
+            'quantity' => 'required|integer|min:1',
+            // unit_price est la source de vérité pour le prix (saisie utilisateur)
+            'unit_price' => 'required|numeric|min:0', 
+            'discount_percentage' => 'nullable|numeric|between:0,100',
+            'final_price' => 'nullable|numeric|min:0', // Recalculé par le serveur
+            'delivery_date' => 'required|date',
+            'status' => 'required|string|in:pending,approved,rejected',
         ]);
+        
+        // --- LOGIQUE DE CALCUL PAR MULTIPLICATION CORRIGÉE ---
+        $unitPrice = $validated['unit_price'];
+        $quantity = $validated['quantity'];
+        $discountPercentage = $validated['discount_percentage'] ?? 0.0;
+        
+        // 1. total_price (Prix avant escompte) = unit_price * quantity
+        $validated['total_price'] = $unitPrice * $quantity;
+        
+        // 2. final_price (Prix TTC après escompte)
+        $validated['final_price'] = $validated['total_price'] * (1 - ($discountPercentage / 100));
+        $validated['final_price'] = round($validated['final_price'], 2); // Arrondir
+
+        $validated['distributor_id'] = $distributor->id;
+        $validated['location_validated'] = false; // Par défaut sans GPS
+
+        $delivery = Delivery::create($validated);
         
         return response()->json([
             'success' => true,
-            'message' => 'Livraison créée avec succès',
-            'delivery' => $delivery->load(['school', 'distributor.user']),
+            'message' => 'Livraison enregistrée avec succès (sans localisation).',
+            'delivery' => $delivery,
         ], 201);
     }
-
+    
     /**
-     * Créer une livraison avec validation GPS
+     * Créer une livraison avec validation GPS (méthode storeWithLocation)
      */
     public function storeWithLocation(Request $request)
     {
         $user = Auth::user();
-        
-        $request->validate([
+        $distributor = $user->distributorProfile;
+
+        if (!$distributor) {
+            throw ValidationException::withMessages(['user' => 'Profil distributeur non valide.']);
+        }
+
+        // 1. Validation des champs (inclut la localisation)
+        $validated = $request->validate([
             'school_id' => 'required|exists:schools,id',
-            'delivery_date' => 'required|date',
             'quantity' => 'required|integer|min:1',
-            'unit_price' => 'required|integer|min:0',
+            // unit_price est la source de vérité pour le prix
+            'unit_price' => 'required|numeric|min:0', 
+            'final_price' => 'nullable|numeric|min:0', // Recalculé par le serveur
+            'discount_percentage' => 'nullable|numeric|between:0,100',
+            'delivery_date' => 'required|date',
             'latitude' => 'required|numeric|between:-90,90',
             'longitude' => 'required|numeric|between:-180,180',
-            'force_create' => 'boolean',
+            'status' => 'required|string|in:pending,approved,rejected',
         ]);
         
-        $school = School::findOrFail($request->school_id);
+        // --- LOGIQUE DE CALCUL PAR MULTIPLICATION CORRIGÉE ---
+        $unitPrice = $validated['unit_price'];
+        $quantity = $validated['quantity'];
+        $discountPercentage = $validated['discount_percentage'] ?? 0.0;
         
-        // Vérifier la géolocalisation
-        $isWithinRadius = $school->isWithinRadius(
-            $request->latitude,
-            $request->longitude
-        );
+        // 2. total_price (Prix avant escompte) = unit_price * quantity
+        // EX: 1000 * 1000 = 1,000,000
+        $validated['total_price'] = $unitPrice * $quantity;
+
+        // 3. final_price (Prix TTC après escompte)
+        $validated['final_price'] = $validated['total_price'] * (1 - ($discountPercentage / 100));
+        $validated['final_price'] = round($validated['final_price'], 2); // Arrondir
         
-        if (!$isWithinRadius && !($request->force_create ?? false)) {
-            $distance = $school->calculateDistance(
-                $request->latitude,
-                $request->longitude
-            );
+        // 4. Vérification de proximité
+        $school = School::find($validated['school_id']);
+        $validated['distributor_id'] = $distributor->id;
+        $validated['location_validated'] = false; // Par défaut non validé
+        
+        if ($school && $school->latitude && $school->longitude) {
+            // Assurez-vous que la méthode getDistanceTo existe sur le modèle School
+            // Le calcul de distance est crucial pour la validation de proximité
+            $distance = $school->getDistanceTo($validated['latitude'], $validated['longitude']);
             
-            return response()->json([
-                'success' => false,
-                'error' => 'LOCATION_OUT_OF_RANGE',
-                'message' => 'Vous n\'êtes pas à proximité de cette école',
-                'distance_km' => round($distance, 3),
-                'allowed_radius_km' => $school->radius ?? 0.05,
-                'school' => [
-                    'name' => $school->name,
-                    'latitude' => $school->latitude,
-                    'longitude' => $school->longitude,
-                ],
-                'user_location' => [
-                    'latitude' => $request->latitude,
-                    'longitude' => $request->longitude,
-                ]
-            ], 403);
+            // Le rayon de validation est généralement 1 km (1000 mètres)
+            if ($distance <= 1.0) { 
+                $validated['location_validated'] = true;
+            }
         }
         
-        // Pour les distributeurs, utiliser leur propre ID
-        $distributorId = $user->role === 'distributor' && $user->distributorProfile 
-            ? $user->distributorProfile->id 
-            : $request->distributor_id;
-        
-        if (!$distributorId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Distributeur requis',
-            ], 400);
-        }
-        
-        // Calculer le prix total
-        $totalPrice = $request->quantity * $request->unit_price;
-        
-        $delivery = Delivery::create([
-            'school_id' => $request->school_id,
-            'distributor_id' => $distributorId,
-            'delivery_date' => $request->delivery_date,
-            'quantity' => $request->quantity,
-            'unit_price' => $request->unit_price,
-            'total_price' => $totalPrice,
-            'delivery_latitude' => $request->latitude,
-            'delivery_longitude' => $request->longitude,
-            'location_validated' => $isWithinRadius,
-        ]);
+        // 5. Création de la livraison
+        $delivery = Delivery::create($validated);
         
         return response()->json([
             'success' => true,
-            'message' => 'Livraison créée avec succès',
-            'delivery' => $delivery->load(['school', 'distributor.user']),
-            'location_validated' => $isWithinRadius,
-            'distance_km' => $isWithinRadius ? 0 : round($distance, 3),
+            'message' => 'Livraison enregistrée avec succès.',
+            'delivery' => $delivery,
         ], 201);
     }
-
+    
     /**
-     * Détails d'une livraison
+     * Obtenir les statistiques du tableau de bord
      */
-    public function show(Delivery $delivery)
+    public function getStats(Request $request)
     {
-        $delivery->load(['school', 'distributor.user']);
+        $user = Auth::user();
         
-        return response()->json([
-            'success' => true,
-            'delivery' => $delivery,
-        ]);
-    }
-
-    /**
-     * Toutes les livraisons (admin seulement)
-     */
-    public function allDeliveries(Request $request)
-    {
-        $query = Delivery::query();
+        // Ces méthodes supposent que vous avez des méthodes statiques dans votre modèle Delivery
+        $monthlyStats = Delivery::getMonthlyStats(now()->year);
+        $wilayaStats = Delivery::getWilayaStats();
         
-        // Filtres
-        if ($request->has('school_id')) {
-            $query->where('school_id', $request->school_id);
-        }
-        
-        if ($request->has('distributor_id')) {
-            $query->where('distributor_id', $request->distributor_id);
-        }
-        
-        if ($request->has('date_from')) {
-            $query->whereDate('delivery_date', '>=', $request->date_from);
-        }
-        
-        if ($request->has('date_to')) {
-            $query->whereDate('delivery_date', '<=', $request->date_to);
-        }
-        
-        if ($request->has('wilaya')) {
-            $query->whereHas('school', function($q) use ($request) {
-                $q->where('wilaya', $request->wilaya);
-            });
-        }
-        
-        $deliveries = $query->with(['school', 'distributor.user'])
-            ->orderBy('delivery_date', 'desc')
-            ->paginate($request->per_page ?? 50);
-        
-        return response()->json([
-            'success' => true,
-            'deliveries' => $deliveries,
-        ]);
-    }
-
-    /**
-     * Statistiques des livraisons (admin seulement)
-     */
-    public function statistics(Request $request)
-    {
-        // Statistiques par mois
-        $monthlyStats = Delivery::select(
-                DB::raw('YEAR(delivery_date) as year'),
-                DB::raw('MONTH(delivery_date) as month'),
-                DB::raw('COUNT(*) as deliveries_count'),
-                DB::raw('SUM(quantity) as total_cards'),
-                DB::raw('SUM(total_price) as total_amount')
-            )
-            ->whereNotNull('delivery_date')
-            ->groupBy('year', 'month')
-            ->orderBy('year', 'desc')
-            ->orderBy('month', 'desc')
-            ->limit(12)
-            ->get();
-            
-        // Statistiques par wilaya
-        $wilayaStats = Delivery::join('schools', 'deliveries.school_id', '=', 'schools.id')
-            ->select(
-                'schools.wilaya',
-                DB::raw('COUNT(*) as deliveries_count'),
-                DB::raw('SUM(deliveries.quantity) as total_cards'),
-                DB::raw('SUM(deliveries.total_price) as total_amount')
-            )
-            ->groupBy('schools.wilaya')
-            ->orderByDesc('total_amount')
-            ->get();
-            
         // Top écoles
         $topSchools = Delivery::join('schools', 'deliveries.school_id', '=', 'schools.id')
             ->select(

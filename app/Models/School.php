@@ -12,13 +12,15 @@ class School extends Model
     protected $fillable = [
         'name',
         'district',
+        'commune',
         'phone',
         'manager_name',
         'student_count',
         'wilaya',
-        'latitude',      // Nouveau: Coordonnée GPS latitude
-        'longitude',     // Nouveau: Coordonnée GPS longitude
-        'radius',        // Nouveau: Rayon de validation en km
+        'latitude',      
+        'longitude',     
+        'radius',        
+        'address',
     ];
 
     protected $casts = [
@@ -26,6 +28,7 @@ class School extends Model
         'longitude' => 'decimal:8',
         'radius' => 'decimal:3',
         'student_count' => 'integer',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -35,19 +38,38 @@ class School extends Model
     {
         return $this->hasMany(Delivery::class);
     }
+    
+    /**
+     * Relation Many-to-Many: Les distributeurs qui ont livré cette école.
+     */
+    public function distributors()
+    {
+        return $this->belongsToMany(Distributor::class, 'deliveries', 'school_id', 'distributor_id')
+                    ->withPivot('delivery_date', 'quantity', 'final_price') 
+                    ->distinct();
+    }
+    
+    /**
+     * CORRECTION CLÉ : Relation avec les paiements.
+     * Ceci suppose que la table 'payments' a une colonne 'school_id'.
+     */
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
 
     /**
      * Vérifie si une position GPS est dans le rayon autorisé de l'école
      */
     public function isWithinRadius($userLat, $userLng)
     {
-        // Si l'école n'a pas de coordonnées GPS, on accepte la livraison
         if (is_null($this->latitude) || is_null($this->longitude)) {
             return true;
         }
         
         $distance = $this->calculateDistance($userLat, $userLng);
-        return $distance <= ($this->radius ?? 0.05); // 50m par défaut
+        return $distance <= ($this->radius ?? 0.05);
     }
 
     /**
@@ -59,7 +81,7 @@ class School extends Model
             return 0;
         }
         
-        $earthRadius = 6371; // Rayon de la Terre en km
+        $earthRadius = 6371;
         
         $dLat = deg2rad($userLat - $this->latitude);
         $dLon = deg2rad($userLng - $this->longitude);
@@ -70,7 +92,7 @@ class School extends Model
         
         $c = 2 * atan2(sqrt($a), sqrt(1-$a));
         
-        return $earthRadius * $c; // Distance en km
+        return $earthRadius * $c;
     }
 
     /**
@@ -161,7 +183,7 @@ class School extends Model
      */
     public function getTotalDeliveredAmountAttribute()
     {
-        return $this->deliveries()->sum('total_price');
+        return $this->deliveries()->sum('final_price'); // Changé de total_price à final_price pour cohérence
     }
 
     /**

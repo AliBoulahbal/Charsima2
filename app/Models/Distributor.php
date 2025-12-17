@@ -17,7 +17,7 @@ class Distributor extends Model
     ];
 
     /**
-     * Relation avec l'utilisateur
+     * Relation avec l'utilisateur (le compte qui se connecte)
      */
     public function user()
     {
@@ -25,7 +25,7 @@ class Distributor extends Model
     }
 
     /**
-     * Relation avec les livraisons
+     * Relation avec les livraisons (effectuées par ce distributeur)
      */
     public function deliveries()
     {
@@ -33,15 +33,16 @@ class Distributor extends Model
     }
 
     /**
-     * Relation avec les paiements
+     * Relation avec les paiements (reçus par ce distributeur)
      */
     public function payments()
     {
+        // Supposons que la table 'payments' a une colonne 'distributor_id'
         return $this->hasMany(Payment::class);
     }
 
     /**
-     * Calcul du total des livraisons
+     * Calcul du total des livraisons (Accessor)
      */
     public function getTotalDeliveriesAttribute()
     {
@@ -49,26 +50,46 @@ class Distributor extends Model
     }
 
     /**
-     * Calcul du montant total des livraisons
+     * Calcul du montant total des livraisons (Accessor)
      */
     public function getTotalDeliveredAmountAttribute()
     {
-        return $this->deliveries()->sum('total_price');
+        // Utilisation de 'final_price' pour plus de précision après discount
+        return $this->deliveries()->sum('final_price'); 
     }
 
     /**
-     * Calcul du montant total payé
+     * Calcul du montant total payé (Accessor)
      */
     public function getTotalPaidAmountAttribute()
     {
         return $this->payments()->sum('amount');
     }
+    
+    /**
+     * Calcul du montant restant dû (Accessor)
+     */
+    public function getTotalRemainingAmountAttribute()
+    {
+        // Solde = Montant livré - Montant payé
+        return $this->getTotalDeliveredAmountAttribute() - $this->getTotalPaidAmountAttribute();
+    }
+    
+    /**
+     * Vérifie si le distributeur est actif (a eu des livraisons récemment)
+     */
+    public function isActive($months = 3)
+    {
+        return $this->deliveries()
+            ->where('delivery_date', '>=', now()->subMonths($months))
+            ->exists();
+    }
 
     /**
-     * Calcul du solde restant
+     * Obtenir le statut actif
      */
-    public function getRemainingAmountAttribute()
+    public function getStatusAttribute()
     {
-        return $this->total_delivered_amount - $this->total_paid_amount;
+        return $this->isActive() ? 'Actif' : 'Inactif';
     }
 }

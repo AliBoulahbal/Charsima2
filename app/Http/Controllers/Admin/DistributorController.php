@@ -17,7 +17,7 @@ class DistributorController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Distributor::with(['user', 'deliveries', 'payments']);
+        $query = Distributor::with(['user', 'payments']);
         
         // Recherche
         if ($request->has('search')) {
@@ -40,14 +40,15 @@ class DistributorController extends Controller
         $distributors = $query->select([
                 'distributors.*',
                 DB::raw('(SELECT COUNT(*) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as deliveries_count'),
-                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
+                // CORRECTION/COHÉRENCE: Utiliser final_price pour le montant livré (comme dans le modèle)
+                DB::raw('(SELECT COALESCE(SUM(final_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
                 DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE payments.distributor_id = distributors.id) as total_paid')
             ])
             ->orderByDesc('deliveries_count')
-            ->paginate(20);
+            ->paginate(20); // CORRECTION: Utiliser paginate() pour l'affichage des liens
         
-        // Liste des wilayas uniques
-        $wilayas = Distributor::select('wilaya')->distinct()->orderBy('wilaya')->pluck('wilaya');
+        // La liste des wilayas pour le filtre (utilisée dans la vue index)
+        $wilayas = $this->getWilayas();
         
         return view('admin.distributors.index', compact('distributors', 'wilayas'));
     }
@@ -58,11 +59,14 @@ class DistributorController extends Controller
     public function create()
     {
         $wilayas = $this->getWilayas();
+        // Charge les utilisateurs qui ont le rôle 'distributor' et n'ont pas encore de profil distributeur
         $users = User::where('role', 'distributor')
             ->whereDoesntHave('distributorProfile')
             ->get();
         
-        return view('admin.distributors.create', compact('wilayas', 'users'));
+        $distributor = new Distributor();
+
+        return view('admin.distributors.create', compact('wilayas', 'users', 'distributor'));
     }
 
     /**
@@ -71,16 +75,11 @@ class DistributorController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'user_id' => 'required|exists:users,id',
+            'user_id' => 'required|exists:users,id|unique:distributors,user_id',
             'name' => 'required|string|max:255',
             'phone' => 'nullable|string|max:20',
             'wilaya' => 'required|string|max:100',
         ]);
-
-        // Vérifier si l'utilisateur a déjà un profil distributeur
-        if (Distributor::where('user_id', $validated['user_id'])->exists()) {
-            return back()->with('error', 'Cet utilisateur a déjà un profil distributeur.');
-        }
 
         Distributor::create($validated);
 
@@ -93,14 +92,15 @@ class DistributorController extends Controller
      */
     public function show(Distributor $distributor)
     {
+        // Chargement des relations pour les accesseurs et l'affichage des détails
         $distributor->load(['user', 'deliveries.school', 'payments']);
         
-        // Statistiques
+        // Calcul des statistiques en utilisant les accesseurs du modèle (plus propre)
         $stats = [
-            'deliveries_count' => $distributor->deliveries()->count(),
-            'total_delivered' => $distributor->deliveries()->sum('total_price'),
-            'total_paid' => $distributor->payments()->sum('amount'),
-            'remaining' => $distributor->deliveries()->sum('total_price') - $distributor->payments()->sum('amount'),
+            'deliveries_count' => $distributor->total_deliveries,
+            'total_delivered' => $distributor->total_delivered_amount, 
+            'total_paid' => $distributor->total_paid_amount,
+            'remaining' => $distributor->total_remaining_amount,
         ];
         
         // Livraisons récentes
@@ -125,7 +125,10 @@ class DistributorController extends Controller
     public function edit(Distributor $distributor)
     {
         $wilayas = $this->getWilayas();
-        return view('admin.distributors.edit', compact('distributor', 'wilayas'));
+        // CORRECTION CLÉ: Charger la liste des utilisateurs pour le formulaire (résout Undefined variable $users)
+        $users = User::orderBy('name')->get(); 
+        
+        return view('admin.distributors.edit', compact('distributor', 'wilayas', 'users'));
     }
 
     /**
@@ -137,11 +140,13 @@ class DistributorController extends Controller
             'name' => 'required|string|max:255',
             'phone' => 'nullable|string|max:20',
             'wilaya' => 'required|string|max:100',
+            // Valider user_id en ignorant l'ID du distributeur actuel
+            'user_id' => 'nullable|exists:users,id|unique:distributors,user_id,' . $distributor->id,
         ]);
 
         $distributor->update($validated);
 
-        // Mettre à jour aussi le nom de l'utilisateur associé
+        // Mettre à jour aussi le nom de l'utilisateur associé (optionnel)
         if ($distributor->user) {
             $distributor->user->update(['name' => $validated['name']]);
         }
@@ -180,7 +185,7 @@ class DistributorController extends Controller
                 DB::raw('MONTH(delivery_date) as month'),
                 DB::raw('COUNT(*) as deliveries_count'),
                 DB::raw('SUM(quantity) as total_cards'),
-                DB::raw('SUM(total_price) as total_amount')
+                DB::raw('SUM(final_price) as total_amount')
             )
             ->whereNotNull('delivery_date')
             ->groupBy('year', 'month')
@@ -208,7 +213,6 @@ class DistributorController extends Controller
      */
     private function getWilayas()
     {
-        // Même liste que pour les écoles
         return [
             'Adrar', 'Chlef', 'Laghouat', 'Oum El Bouaghi', 'Batna', 'Béjaïa', 'Biskra', 'Béchar', 'Blida', 'Bouira',
             'Tamanrasset', 'Tébessa', 'Tlemcen', 'Tiaret', 'Tizi Ouzou', 'Alger', 'Djelfa', 'Jijel', 'Sétif', 'Saïda',

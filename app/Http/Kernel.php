@@ -16,6 +16,8 @@ class Kernel extends HttpKernel
         \Illuminate\Foundation\Http\Middleware\ValidatePostSize::class,
         \App\Http\Middleware\TrimStrings::class,
         \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
+        //\Illuminate\Http\Middleware\HandleCors::class,
+        \App\Http\Middleware\Cors::class,
     ];
 
     /**
@@ -44,6 +46,7 @@ class Kernel extends HttpKernel
     protected $middlewareAliases = [
         'auth' => \App\Http\Middleware\Authenticate::class,
         'guest' => \App\Http\Middleware\RedirectIfAuthenticated::class,
+        'role' => \App\Http\Middleware\Role::class,
         //'checkrole' => \App\Http\Middleware\Role::class, // Renamed!
         'admin' => \App\Http\Middleware\AdminMiddleware::class,
         //'super_admin' => \App\Http\Middleware\SuperAdminMiddleware::class,
@@ -54,5 +57,6 @@ class Kernel extends HttpKernel
         'signed' => \Illuminate\Routing\Middleware\ValidateSignature::class,
         'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+        
     ];
 }

@@ -4,9 +4,14 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\School;
-use App\Models\Delivery;
+use App\Models\Delivery; 
+use App\Models\Distributor; 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Imports\SchoolsImport; 
+use Maatwebsite\Excel\Facades\Excel; 
+use Illuminate\Validation\ValidationException; 
+use App\Exports\SchoolsExport;
 
 class SchoolController extends Controller
 {
@@ -17,33 +22,34 @@ class SchoolController extends Controller
     {
         $query = School::query();
         
-        // Recherche
-        if ($request->has('search')) {
+        // 1. Calculer le nombre de livraisons
+        $query->withCount('deliveries');
+
+        // 2. Calculer le montant total livré via une sous-requête (évite erreur 1055)
+        $query->addSelect([
+            'total_delivered' => Delivery::select(DB::raw('COALESCE(SUM(final_price), 0)'))
+                ->whereColumn('school_id', 'schools.id') 
+                ->take(1)
+        ]);
+
+        // --- FILTRES ---
+        if ($request->filled('search')) {
             $search = $request->input('search');
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('manager_name', 'like', "%{$search}%")
-                  ->orWhere('district', 'like', "%{$search}%")
-                  ->orWhere('wilaya', 'like', "%{$search}%");
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', '%' . $search . '%')
+                  ->orWhere('wilaya', 'like', '%' . $search . '%')
+                  ->orWhere('commune', 'like', '%' . $search . '%');
             });
         }
-        
-        // Filtre par wilaya
-        if ($request->has('wilaya')) {
+
+        if ($request->filled('wilaya')) {
             $query->where('wilaya', $request->input('wilaya'));
         }
+
+        $schools = $query->orderBy('name')->paginate(20);
         
-        $schools = $query->withCount('deliveries')
-            ->addSelect([
-                'total_delivered' => Delivery::selectRaw('COALESCE(SUM(total_price), 0)')
-                    ->whereColumn('school_id', 'schools.id')
-            ])
-            ->latest()
-            ->paginate(20);
-        
-        // Liste des wilayas uniques pour le filtre
-        $wilayas = School::select('wilaya')->distinct()->orderBy('wilaya')->pluck('wilaya');
-        
+        $wilayas = $this->getWilayas(); 
+
         return view('admin.schools.index', compact('schools', 'wilayas'));
     }
 
@@ -62,12 +68,14 @@ class SchoolController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'district' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'manager_name' => 'required|string|max:255',
-            'student_count' => 'required|integer|min:0',
+            'name' => 'required|string|max:255|unique:schools,name',
             'wilaya' => 'required|string|max:100',
+            'commune' => 'required|string|max:100',
+            'district' => 'nullable|string|max:100',
+            'address' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'manager_name' => 'nullable|string|max:255',
+            'student_count' => 'nullable|integer|min:0',
         ]);
 
         School::create($validated);
@@ -81,23 +89,31 @@ class SchoolController extends Controller
      */
     public function show(School $school)
     {
-        $school->load(['deliveries.distributor.user', 'deliveries.payments']);
+        // 1. Charger les relations
+        // S'assurer que 'payments' est inclus pour les statistiques de paiement
+        $school->load('distributors', 'deliveries', 'payments'); 
         
-        // Statistiques de l'école
+        // 2. Calculer les statistiques
+        $totalAmountDue = $school->deliveries->sum('final_price');
+        $totalPaid = $school->payments->sum('amount'); // Nécessite la relation payments() dans School.php
+        
         $stats = [
-            'total_deliveries' => $school->deliveries()->count(),
-            'total_cards' => $school->deliveries()->sum('quantity'),
-            'total_amount' => $school->deliveries()->sum('total_price'),
-            'total_paid' => $school->deliveries()->withSum('payments', 'amount')->get()->sum('payments_sum_amount'),
+            'total_deliveries' => $school->deliveries->count(),
+            'total_cards' => $school->deliveries->sum('quantity'), 
+            'total_amount' => $totalAmountDue,
+            'total_paid' => $totalPaid,
+            'total_remaining' => $totalAmountDue - $totalPaid,
         ];
         
-        // Dernières livraisons
+        // 3. Récupérer les livraisons récentes (pour la vue show.blade.php)
         $recentDeliveries = $school->deliveries()
-            ->with(['distributor.user', 'payments'])
-            ->latest('delivery_date')
-            ->limit(10)
-            ->get();
+                                   ->latest('delivery_date')
+                                   ->take(10)
+                                   // Assurez-vous d'EAGER LOAD les relations nécessaires si elles sont utilisées dans le tableau de la vue
+                                   // ->with(['distributor', 'kiosk'])
+                                   ->get();
 
+        // 4. Passer toutes les variables à la vue
         return view('admin.schools.show', compact('school', 'stats', 'recentDeliveries'));
     }
 
@@ -116,12 +132,14 @@ class SchoolController extends Controller
     public function update(Request $request, School $school)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'district' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'manager_name' => 'required|string|max:255',
-            'student_count' => 'required|integer|min:0',
+            'name' => 'required|string|max:255|unique:schools,name,' . $school->id,
             'wilaya' => 'required|string|max:100',
+            'commune' => 'required|string|max:100',
+            'district' => 'nullable|string|max:100',
+            'address' => 'nullable|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'manager_name' => 'nullable|string|max:255',
+            'student_count' => 'nullable|integer|min:0',
         ]);
 
         $school->update($validated);
@@ -135,11 +153,6 @@ class SchoolController extends Controller
      */
     public function destroy(School $school)
     {
-        // Vérifier s'il y a des livraisons associées
-        if ($school->deliveries()->exists()) {
-            return back()->with('error', 'Impossible de supprimer cette école car elle a des livraisons associées.');
-        }
-        
         $school->delete();
 
         return redirect()->route('admin.schools.index')
@@ -147,28 +160,53 @@ class SchoolController extends Controller
     }
 
     /**
-     * Export des écoles (PDF/Excel)
+     * Traite le fichier Excel téléchargé et lance l'importation.
      */
-    public function export(Request $request)
+    public function import(Request $request)
     {
-        $query = School::query();
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls,csv,txt|max:10240',
+            'wilaya' => 'required|string|max:100',
+        ]);
         
-        if ($request->has('wilaya')) {
-            $query->where('wilaya', $request->input('wilaya'));
+        $wilaya = $request->input('wilaya');
+
+        try {
+            Excel::import(new SchoolsImport($wilaya), $request->file('file'));
+
+            return back()->with('success', "Importation des écoles pour $wilaya réussie !");
+
+        } catch (\Maatwebsite\Excel\Validators\ValidationException $e) {
+            $failures = $e->failures();
+            $errors = collect($failures)->map(function ($failure) {
+                return "Ligne {$failure->row()}: " . implode(', ', $failure->errors());
+            })->implode('; ');
+            
+            return back()->with('error', "Échec de la validation de l'importation. Détails : $errors")
+                         ->withErrors(['file' => 'Erreur de validation de données dans le fichier.']);
+
+        } catch (\Exception $e) {
+            return back()->with('error', 'Erreur lors de l\'importation: ' . $e->getMessage())
+                         ->withErrors(['file' => 'Veuillez vérifier le format du fichier, les en-têtes de colonnes, et les données.']);
         }
-        
-        $schools = $query->withCount('deliveries')
-            ->addSelect([
-                'total_delivered' => Delivery::selectRaw('COALESCE(SUM(total_price), 0)')
-                    ->whereColumn('school_id', 'schools.id')
-            ])
-            ->get();
-        
-        // La vue 'admin.schools.export' devrait gérer la génération et le téléchargement du fichier.
-        return view('admin.schools.export', compact('schools'));
     }
+    
     /**
-     * Liste des wilayas
+     * Export des écoles (Excel)
+     */
+    public function export()
+    {
+        $filename = 'ecoles_' . now()->format('Ymd_His') . '.xlsx';
+        
+        // CORRECTION CLÉ : Utilisation de Maatwebsite\Excel pour le téléchargement
+        return Excel::download(new SchoolsExport, $filename); 
+        
+        // Supprimez l'ancien placeholder si vous l'aviez
+        // return back()->with('error', 'La fonction d\'exportation n\'est pas encore implémentée.');
+    }
+
+    /**
+     * Liste des wilayas (Helper function)
      */
     private function getWilayas()
     {
@@ -183,5 +221,3 @@ class SchoolController extends Controller
         ];
     }
 }
-
-

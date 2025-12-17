@@ -1,4 +1,3 @@
-// app/Http/Controllers/Api/SchoolController.php
 <?php
 
 namespace App\Http\Controllers\Api;
@@ -28,7 +27,8 @@ class SchoolController extends Controller
             $query->where(function($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('manager_name', 'like', "%{$search}%")
-                  ->orWhere('district', 'like', "%{$search}%");
+                  ->orWhere('district', 'like', "%{$search}%")
+                  ->orWhere('commune', 'like', "%{$search}%");
             });
         }
         
@@ -156,6 +156,8 @@ class SchoolController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'district' => 'required|string|max:255',
+            'commune' => 'required|string|max:255',
+            'address' => 'required|string|max:255',
             'phone' => 'nullable|string|max:20',
             'manager_name' => 'required|string|max:255',
             'student_count' => 'required|integer|min:0',
@@ -182,6 +184,8 @@ class SchoolController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'district' => 'required|string|max:255',
+            'commune' => 'required|string|max:255',
+            'address' => 'required|string|max:255',
             'phone' => 'nullable|string|max:20',
             'manager_name' => 'required|string|max:255',
             'student_count' => 'required|integer|min:0',
@@ -253,6 +257,49 @@ class SchoolController extends Controller
     }
 
     /**
+     * Créer une nouvelle école (pour distributeur mobile)
+     * Le distributeur ne peut créer l'école que dans sa propre wilaya.
+     */
+    public function distributorStore(Request $request)
+    {
+        $user = Auth::user();
+        
+        // 1. Récupérer le profil du distributeur
+        $distributor = $user->distributorProfile;
+
+        if (!$distributor) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Profil distributeur non trouvé.',
+            ], 403);
+        }
+        
+        // 2. Validation des données. La wilaya sera tirée du distributeur
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|unique:schools,name',
+            'district' => 'required|string|max:255',
+            'commune' => 'required|string|max:255',
+            'address' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            // Coordonnées requises pour le Distributeur
+            'latitude' => 'required|numeric|between:-90,90', 
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+        
+        // 3. Assigner la wilaya du distributeur (Sécurité)
+        $validated['wilaya'] = $distributor->wilaya; 
+        
+        // 4. Création de l'école
+        $school = School::create($validated);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'École créée avec succès dans votre Wilaya.',
+            'school' => $school,
+        ], 201);
+    }
+
+    /**
      * Écoles pour un distributeur
      */
     public function distributorSchools(Request $request)
@@ -279,6 +326,149 @@ class SchoolController extends Controller
         return response()->json([
             'success' => true,
             'schools' => $schools,
+        ]);
+    }
+
+    /**
+     * Recherche avancée d'écoles
+     */
+    public function search(Request $request)
+    {
+        $request->validate([
+            'query' => 'required|string|min:2',
+            'wilaya' => 'nullable|string',
+            'commune' => 'nullable|string',
+        ]);
+        
+        $query = School::query();
+        
+        if ($request->has('query')) {
+            $search = $request->query;
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('manager_name', 'like', "%{$search}%")
+                  ->orWhere('district', 'like', "%{$search}%")
+                  ->orWhere('commune', 'like', "%{$search}%")
+                  ->orWhere('address', 'like', "%{$search}%");
+            });
+        }
+        
+        if ($request->has('wilaya') && $request->wilaya) {
+            $query->where('wilaya', $request->wilaya);
+        }
+        
+        if ($request->has('commune') && $request->commune) {
+            $query->where('commune', $request->commune);
+        }
+        
+        $schools = $query->withCount('deliveries')
+            ->orderBy('name')
+            ->paginate($request->per_page ?? 20);
+        
+        return response()->json([
+            'success' => true,
+            'schools' => $schools,
+            'total' => $schools->total(),
+        ]);
+    }
+
+    /**
+     * Obtenir les communes par wilaya
+     */
+    public function getCommunesByWilaya(Request $request)
+    {
+        $request->validate([
+            'wilaya' => 'required|string',
+        ]);
+        
+        $communes = School::where('wilaya', $request->wilaya)
+            ->select('commune')
+            ->distinct()
+            ->orderBy('commune')
+            ->pluck('commune');
+        
+        return response()->json([
+            'success' => true,
+            'communes' => $communes,
+            'wilaya' => $request->wilaya,
+        ]);
+    }
+
+    /**
+     * Statistiques des écoles (pour admin)
+     */
+    public function statistics()
+    {
+        $totalSchools = School::count();
+        $schoolsWithCoordinates = School::whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->count();
+        $schoolsWithoutCoordinates = $totalSchools - $schoolsWithCoordinates;
+        
+        // Écoles par wilaya
+        $schoolsByWilaya = School::select('wilaya', \DB::raw('COUNT(*) as count'))
+            ->groupBy('wilaya')
+            ->orderByDesc('count')
+            ->get();
+        
+        // Écoles avec le plus de livraisons
+        $topSchools = School::withCount('deliveries')
+            ->orderByDesc('deliveries_count')
+            ->limit(10)
+            ->get();
+        
+        return response()->json([
+            'success' => true,
+            'statistics' => [
+                'total_schools' => $totalSchools,
+                'schools_with_coordinates' => $schoolsWithCoordinates,
+                'schools_without_coordinates' => $schoolsWithoutCoordinates,
+                'coverage_percentage' => $totalSchools > 0 ? round(($schoolsWithCoordinates / $totalSchools) * 100, 2) : 0,
+                'schools_by_wilaya' => $schoolsByWilaya,
+                'top_schools' => $topSchools,
+            ],
+        ]);
+    }
+
+    /**
+     * Mettre à jour les coordonnées d'une école
+     */
+    public function updateCoordinates(Request $request, School $school)
+    {
+        $request->validate([
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'radius' => 'nullable|numeric|min:0.01|max:1',
+        ]);
+        
+        $school->update([
+            'latitude' => $request->latitude,
+            'longitude' => $request->longitude,
+            'radius' => $request->radius ?? $school->radius,
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Coordonnées mises à jour avec succès',
+            'school' => $school->fresh(),
+        ]);
+    }
+
+    /**
+     * Activer/Désactiver une école
+     */
+    public function toggleStatus(School $school)
+    {
+        $school->update([
+            'is_active' => !$school->is_active,
+        ]);
+        
+        $status = $school->is_active ? 'activée' : 'désactivée';
+        
+        return response()->json([
+            'success' => true,
+            'message' => "École {$status} avec succès",
+            'school' => $school,
         ]);
     }
 }

@@ -27,6 +27,7 @@ Route::middleware(['auth', Role::class . ':admin,super_admin'])->prefix('admin')
 
     // Schools Management
     Route::get('schools/export', [SchoolController::class, 'export'])->name('schools.export');
+    Route::post('schools/import', [SchoolController::class, 'import'])->name('schools.import');
     Route::resource('schools', SchoolController::class);
     
     // CORRECTION : Route pour l'API de chargement des écoles
