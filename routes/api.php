@@ -61,6 +61,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/deliveries/{delivery}', [DeliveryController::class, 'show']);
     Route::post('/deliveries', [DeliveryController::class, 'store']);
     Route::post('/deliveries/with-location', [DeliveryController::class, 'storeWithLocation']);
+    Route::post('/deliveries/storeWithLocation', [DeliveryController::class, 'storeWithLocation']);
     
     // Routes spécifiques distributeur
     Route::middleware(['role:distributor'])->group(function () {
