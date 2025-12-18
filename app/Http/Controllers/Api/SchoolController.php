@@ -228,11 +228,7 @@ class SchoolController extends Controller
      * Obtenir la liste des wilayas
      */
     public function getWilayas()
-    {
-        $wilayas = School::select('wilaya')
-            ->distinct()
-            ->orderBy('wilaya')
-            ->pluck('wilaya');
+    {$wilayas = School::distinct()->pluck('wilaya');
         
         return response()->json([
             'success' => true,

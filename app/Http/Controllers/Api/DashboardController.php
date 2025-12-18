@@ -8,11 +8,12 @@ use App\Models\School;
 use App\Models\User;
 use App\Models\Distributor;
 use App\Models\Kiosk;
+use App\Models\CardAllocation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Log; // Ajout de l'import Log
+use Illuminate\Support\Facades\Log;
 
 class DashboardController extends Controller
 {
@@ -28,7 +29,8 @@ class DashboardController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'role' => $user->role,
-                'phone' => $user->phone ?? 'N/A', // Utilisation du champ 'phone' (supposé existant après migration)
+                'phone' => $user->phone ?? 'N/A',
+                'wilaya' => $user->distributorProfile->wilaya ?? 'N/A',
             ]
         ];
         
@@ -39,7 +41,7 @@ class DashboardController extends Controller
     }
     
     /**
-     * Dashboard pour l'app mobile Flutter - Route: /api/distributor/dashboard
+     * Dashboard pour l'app mobile Flutter - Route: /api/dashboard/distributor-stats
      */
     public function distributorDashboard(Request $request)
     {
@@ -53,7 +55,6 @@ class DashboardController extends Controller
                 ], 403);
             }
             
-            // Assurez-vous que la relation distributorProfile existe dans le modèle User
             $distributor = $user->distributorProfile;
             
             if (!$distributor) {
@@ -63,7 +64,7 @@ class DashboardController extends Controller
                 ], 404);
             }
             
-            // Les calculs utilisent les Accessors du modèle Distributor
+            // === STATISTIQUES DE BASE ===
             $totalDeliveries = $distributor->total_deliveries;
             $totalRevenue = $distributor->total_delivered_amount;
             $totalPaid = $distributor->total_paid_amount;
@@ -80,9 +81,32 @@ class DashboardController extends Controller
                 ->where('status', 'confirmed')
                 ->count();
             
+            // === STATISTIQUES DES CARTES ===
+            // Total des cartes allouées au distributeur
+            $totalCards = $distributor->deliveries()->sum('quantity');
+            
+            // Cartes livrées
+            $cardAllocations = []; 
+            
+            // Cartes en attente de livraison
+            $cardsPending = $distributor->deliveries()
+                ->whereIn('status', ['pending', 'in_progress'])
+                ->sum('quantity');
+            
+            // Cartes disponibles = total - (livrées + en attente)
+            $cardsAvailable = max(0, $totalCards - ($cardsDelivered + $cardsPending));
+            
+            // === STATISTIQUES DES PAIEMENTS ===
+            $totalPayments = $distributor->payments()->count();
+            $lastPayment = $distributor->payments()
+                ->orderBy('payment_date', 'desc')
+                ->first();
+            
+            // Taux de paiement
+            $paymentRate = $totalRevenue > 0 ? ($totalPaid / $totalRevenue) * 100 : 0;
+            
             // === COMMANDES RÉCENTES (10 dernières) ===
             $recentDeliveries = $distributor->deliveries()
-                // CORRECTION CLÉ: Assure que les colonnes 'address' et 'phone' sont sélectionnées si elles sont dans la DB
                 ->with(['school:id,name,commune,wilaya,address,phone']) 
                 ->orderBy('delivery_date', 'desc')
                 ->limit(10)
@@ -92,14 +116,34 @@ class DashboardController extends Controller
                         'id' => $delivery->id,
                         'order_number' => 'CMD-' . str_pad($delivery->id, 6, '0', STR_PAD_LEFT),
                         'customer' => $delivery->school->name ?? 'N/A',
+                        'school_name' => $delivery->school->name ?? 'N/A',
                         'address' => $delivery->school->address ?? $delivery->school->commune ?? $delivery->school->wilaya ?? '',
-                        'city' => $delivery->school->wilaya ?? '', // Wilaya utilisée comme ville dans ce contexte
+                        'city' => $delivery->school->wilaya ?? '',
                         'status' => $delivery->status,
                         'amount' => (float) ($delivery->final_price ?? 0),
                         'quantity' => $delivery->quantity ?? 0,
                         'date' => $delivery->delivery_date ? Carbon::parse($delivery->delivery_date)->format('d/m/Y') : 'N/A',
                         'school_id' => $delivery->school_id,
                         'status_color' => $this->getStatusColor($delivery->status),
+                    ];
+                });
+            
+            // === PAIEMENTS RÉCENTS (5 derniers) ===
+            $recentPayments = $distributor->payments()
+                ->orderBy('payment_date', 'desc')
+                ->limit(5)
+                ->get()
+                ->map(function ($payment) {
+                    return [
+                        'id' => $payment->id,
+                        'amount' => (float) $payment->amount,
+                        'payment_date' => $payment->payment_date ? Carbon::parse($payment->payment_date)->format('d/m/Y H:i') : 'N/A',
+                        'date' => $payment->payment_date ? Carbon::parse($payment->payment_date)->format('d/m/Y') : 'N/A',
+                        'method' => $payment->method ?? 'cash',
+                        'payment_method' => $payment->method ?? 'cash',
+                        'reference' => $payment->reference_number,
+                        'reference_number' => $payment->reference_number,
+                        'delivery_id' => $payment->delivery_id,
                     ];
                 });
             
@@ -122,34 +166,74 @@ class DashboardController extends Controller
                 ->distinct('school_id')
                 ->count('school_id');
             
+            // === STOCK DE CARTES DÉTAILLÉ ===
+            $cardAllocations = CardAllocation::where('distributor_id', $distributor->id)
+                ->where('status', 'active')
+                ->with('cardType')
+                ->get()
+                ->map(function ($allocation) {
+                    return [
+                        'card_type' => $allocation->cardType->name ?? 'Standard',
+                        'quantity_allocated' => $allocation->quantity,
+                        'quantity_used' => $allocation->quantity_used,
+                        'quantity_available' => $allocation->quantity - $allocation->quantity_used,
+                        'allocation_date' => $allocation->allocation_date,
+                    ];
+                });
+            
             // === RETOUR DES DONNÉES ===
             return response()->json([
                 'success' => true,
                 'data' => [
+                    // Statistiques de base
                     'totalOrders' => $totalDeliveries,
                     'pendingDeliveries' => $pendingDeliveries,
                     'completedToday' => $completedToday,
                     'totalRevenue' => (float) $totalRevenue,
                     'totalPaid' => (float) $totalPaid,
                     'remainingAmount' => (float) $remainingAmount,
+                    
+                    // Statistiques des cartes
+                    'totalCards' => $totalCards,
+                    'cardsDelivered' => $cardsDelivered,
+                    'cardsAvailable' => $cardsAvailable,
+                    'cardsPending' => $cardsPending,
+                    'cardAllocations' => $cardAllocations,
+                    
+                    // Statistiques des paiements
+                    'totalPayments' => $totalPayments,
+                    'lastPaymentAmount' => $lastPayment ? (float) $lastPayment->amount : 0,
+                    'lastPaymentDate' => $lastPayment ? $lastPayment->payment_date : null,
+                    'paymentRate' => round($paymentRate, 2),
+                    
+                    // Statistiques mensuelles
                     'monthlyDeliveries' => $monthlyDeliveries,
                     'monthlyRevenue' => (float) $monthlyRevenue,
                     'assignedSchools' => $assignedSchools,
+                    
+                    // Données récentes
                     'recentOrders' => $recentDeliveries,
+                    'recentPayments' => $recentPayments,
+                    
+                    // Informations distributeur
                     'distributor' => [
                         'id' => $distributor->id,
                         'name' => $distributor->name ?? $user->name,
                         'email' => $user->email,
-                        // Utilise $user->phone si $distributor->phone est null
-                        'phone' => $distributor->phone ?? $user->phone ?? 'Non renseigné', 
+                        'phone' => $distributor->phone ?? $user->phone ?? 'Non renseigné',
                         'wilaya' => $distributor->wilaya ?? 'Non renseigné',
                         'address' => $distributor->address ?? 'Non renseigné',
+                        'commission_rate' => $distributor->commission_rate ?? 0,
                     ],
+                    
+                    // Résumé
                     'summary' => [
                         'deliveries' => $totalDeliveries,
                         'revenue' => number_format($totalRevenue, 2, ',', ' ') . ' DZD',
                         'due' => number_format($remainingAmount, 2, ',', ' ') . ' DZD',
+                        'cards' => "$cardsDelivered/$totalCards cartes livrées",
                     ],
+                    
                     'stats_date' => now()->format('d/m/Y H:i'),
                 ]
             ]);
@@ -165,14 +249,15 @@ class DashboardController extends Controller
             ], 500);
         }
     }
-        /**
+    
+    /**
      * Statistiques pour le Distributeur mobile - Route: /api/dashboard/distributor-stats
+     * (Version alternative pour compatibilité)
      */
     public function distributorStats(Request $request)
     {
         $user = Auth::user();
         
-        // Assurez-vous d'avoir une relation 'distributorProfile' dans le modèle User
         $distributor = $user->distributorProfile;
 
         if (!$distributor) {
@@ -184,6 +269,17 @@ class DashboardController extends Controller
         $totalDeliveredAmount = $distributor->getTotalDeliveredAmountAttribute();
         $totalPaid = $distributor->getTotalPaidAmountAttribute(); 
         $remaining = $distributor->getTotalRemainingAmountAttribute();
+        
+        // Statistiques des cartes
+        $totalCards = CardAllocation::where('distributor_id', $distributor->id)
+            ->where('status', 'active')
+            ->sum('quantity');
+        
+        $cardsDelivered = $distributor->deliveries()
+            ->where('status', 'confirmed')
+            ->sum('quantity');
+        
+        $cardsAvailable = max(0, $totalCards - $cardsDelivered);
         
         // --- Statistiques mensuelles ---
         $currentMonth = now()->month;
@@ -209,21 +305,43 @@ class DashboardController extends Controller
             ->select('id', 'delivery_date', 'final_price', 'quantity', 'status', 'school_id', 'kiosk_id')
             ->orderBy('delivery_date', 'desc')
             ->limit(10)
-            ->get();
+            ->get()
+            ->map(function ($delivery) {
+                return [
+                    'id' => $delivery->id,
+                    'date' => $delivery->delivery_date ? Carbon::parse($delivery->delivery_date)->format('d/m/Y') : 'N/A',
+                    'school' => $delivery->school->name ?? 'N/A',
+                    'amount' => (float) $delivery->final_price,
+                    'quantity' => $delivery->quantity,
+                    'status' => $delivery->status,
+                ];
+            });
         
         $recentPayments = $distributor->payments()
             ->select('id', 'amount', 'payment_date', 'method', 'reference_number')
             ->orderBy('payment_date', 'desc')
             ->limit(5)
-            ->get();
+            ->get()
+            ->map(function ($payment) {
+                return [
+                    'id' => $payment->id,
+                    'amount' => (float) $payment->amount,
+                    'payment_date' => $payment->payment_date ? Carbon::parse($payment->payment_date)->format('d/m/Y') : 'N/A',
+                    'method' => $payment->method,
+                    'reference_number' => $payment->reference_number,
+                ];
+            });
         
         return response()->json([
             'success' => true,
-            'stats' => [
+            'data' => [
                 'total_deliveries' => $totalDeliveries,
                 'total_delivered_amount' => $totalDeliveredAmount,
                 'total_paid' => $totalPaid,
                 'remaining' => $remaining,
+                'totalCards' => $totalCards,
+                'cardsDelivered' => $cardsDelivered,
+                'cardsAvailable' => $cardsAvailable,
                 'monthly_deliveries' => $monthlyDeliveries,
                 'monthly_amount' => $monthlyAmount,
                 'schools_served' => $schoolsServed,
@@ -231,6 +349,76 @@ class DashboardController extends Controller
             ],
             'recent_deliveries' => $recentDeliveries,
             'recent_payments' => $recentPayments,
+        ]);
+    }
+    
+    /**
+     * Statistiques détaillées des cartes pour un distributeur
+     */
+    public function cardsStats(Request $request)
+    {
+        $user = Auth::user();
+        $distributor = $user->distributorProfile;
+        
+        if (!$distributor) {
+            return response()->json(['success' => false, 'error' => 'Profil distributeur non trouvé.'], 404);
+        }
+        
+        // Récupérer toutes les allocations de cartes
+        $allocations = CardAllocation::where('distributor_id', $distributor->id)
+            ->with('cardType')
+            ->get();
+        
+        $totalAllocated = $allocations->sum('quantity');
+        $totalUsed = $allocations->sum('quantity_used');
+        $totalAvailable = $totalAllocated - $totalUsed;
+        
+        // Statistiques par type de carte
+        $cardsByType = $allocations->map(function ($allocation) {
+            return [
+                'type' => $allocation->cardType->name ?? 'Standard',
+                'type_id' => $allocation->card_type_id,
+                'allocated' => $allocation->quantity,
+                'used' => $allocation->quantity_used,
+                'available' => $allocation->quantity - $allocation->quantity_used,
+                'allocation_date' => $allocation->allocation_date,
+                'expiry_date' => $allocation->expiry_date,
+            ];
+        });
+        
+        // Historique des livraisons par mois (pour le graphique)
+        $monthlyUsage = Delivery::where('distributor_id', $distributor->id)
+            ->select(
+                DB::raw('YEAR(delivery_date) as year'),
+                DB::raw('MONTH(delivery_date) as month'),
+                DB::raw('SUM(quantity) as cards_delivered')
+            )
+            ->where('status', 'confirmed')
+            ->groupBy('year', 'month')
+            ->orderBy('year', 'desc')
+            ->orderBy('month', 'desc')
+            ->limit(6)
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'period' => Carbon::create($item->year, $item->month, 1)->format('M Y'),
+                    'cards_delivered' => (int) $item->cards_delivered,
+                ];
+            })
+            ->reverse()
+            ->values();
+        
+        return response()->json([
+            'success' => true,
+            'stats' => [
+                'total_allocated' => $totalAllocated,
+                'total_used' => $totalUsed,
+                'total_available' => $totalAvailable,
+                'usage_percentage' => $totalAllocated > 0 ? round(($totalUsed / $totalAllocated) * 100, 2) : 0,
+            ],
+            'cards_by_type' => $cardsByType,
+            'monthly_usage' => $monthlyUsage,
+            'last_updated' => now()->toDateTimeString(),
         ]);
     }
     
@@ -263,6 +451,7 @@ class DashboardController extends Controller
                 'date' => $delivery->delivery_date,
                 'status' => $delivery->status,
                 'icon' => 'local_shipping',
+                'color' => $this->getStatusColor($delivery->status),
             ];
         }
         
@@ -280,6 +469,25 @@ class DashboardController extends Controller
                 'date' => $payment->payment_date,
                 'reference' => $payment->reference_number,
                 'icon' => 'payments',
+                'color' => '#4CAF50',
+            ];
+        }
+        
+        // Récupérer les allocations de cartes récentes
+        $allocations = CardAllocation::where('distributor_id', $distributor->id)
+            ->with('cardType')
+            ->orderBy('allocation_date', 'desc')
+            ->limit(5)
+            ->get();
+        
+        foreach ($allocations as $allocation) {
+            $activities[] = [
+                'type' => 'card_allocation',
+                'title' => 'Allocation de cartes',
+                'description' => $allocation->quantity . ' cartes ' . ($allocation->cardType->name ?? 'Standard'),
+                'date' => $allocation->allocation_date,
+                'icon' => 'credit_card',
+                'color' => '#2196F3',
             ];
         }
         
@@ -319,6 +527,11 @@ class DashboardController extends Controller
                 ->whereMonth('delivery_date', $month)
                 ->count();
             
+            $cardsDelivered = $distributor->deliveries()
+                ->whereYear('delivery_date', $currentYear)
+                ->whereMonth('delivery_date', $month)
+                ->sum('quantity');
+            
             $revenue = $distributor->deliveries()
                 ->whereYear('delivery_date', $currentYear)
                 ->whereMonth('delivery_date', $month)
@@ -333,6 +546,7 @@ class DashboardController extends Controller
                 'month' => $month,
                 'month_name' => Carbon::create()->month($month)->locale('fr')->monthName,
                 'deliveries' => $deliveriesCount,
+                'cards_delivered' => $cardsDelivered,
                 'revenue' => (float) $revenue,
                 'payments' => (float) $payments,
                 'balance' => (float) ($revenue - $payments),
@@ -345,6 +559,7 @@ class DashboardController extends Controller
             'months' => $months,
             'summary' => [
                 'total_deliveries' => array_sum(array_column($months, 'deliveries')),
+                'total_cards_delivered' => array_sum(array_column($months, 'cards_delivered')),
                 'total_revenue' => array_sum(array_column($months, 'revenue')),
                 'total_payments' => array_sum(array_column($months, 'payments')),
                 'total_balance' => array_sum(array_column($months, 'balance')),
@@ -357,20 +572,37 @@ class DashboardController extends Controller
      */
     public function adminStats(Request $request)
     {
+        $user = Auth::user();
+        
+        if (!in_array($user->role, ['admin', 'super_admin'])) {
+            return response()->json(['success' => false, 'error' => 'Accès non autorisé.'], 403);
+        }
+        
         // --- Statistiques globales pour l'Admin ---
         $totalDeliveries = Delivery::count();
         $totalCards = Delivery::sum('quantity');
-        $totalExpected = Delivery::sum('total_price');
+        $totalExpected = Delivery::sum('final_price');
         $totalPaid = Payment::sum('amount');
         $remaining = $totalExpected - $totalPaid;
         
         $distributorCount = Distributor::count();
         $schoolCount = School::count();
         $kioskCount = Kiosk::count();
+        
+        // Statistiques des cartes
+        $totalCardsAllocated = CardAllocation::sum('quantity');
+        $totalCardsUsed = CardAllocation::sum('quantity_used');
+        $totalCardsAvailable = $totalCardsAllocated - $totalCardsUsed;
 
         // Dernières livraisons
         $recentDeliveries = Delivery::with(['school', 'distributor.user'])
             ->orderBy('delivery_date', 'desc')
+            ->limit(10)
+            ->get();
+        
+        // Derniers paiements
+        $recentPayments = Payment::with(['distributor.user'])
+            ->orderBy('payment_date', 'desc')
             ->limit(10)
             ->get();
             
@@ -385,8 +617,12 @@ class DashboardController extends Controller
                 'distributor_count' => $distributorCount,
                 'school_count' => $schoolCount,
                 'kiosk_count' => $kioskCount,
+                'total_cards_allocated' => $totalCardsAllocated,
+                'total_cards_used' => $totalCardsUsed,
+                'total_cards_available' => $totalCardsAvailable,
             ],
             'recent_deliveries' => $recentDeliveries,
+            'recent_payments' => $recentPayments,
         ]);
     }
     
@@ -395,6 +631,12 @@ class DashboardController extends Controller
      */
     public function overview(Request $request)
     {
+        $user = Auth::user();
+        
+        if (!in_array($user->role, ['admin', 'super_admin'])) {
+            return response()->json(['success' => false, 'error' => 'Accès non autorisé.'], 403);
+        }
+        
         // Statistiques par statut
         $deliveriesByStatus = Delivery::select('status', DB::raw('COUNT(*) as count'))
             ->groupBy('status')
@@ -410,11 +652,19 @@ class DashboardController extends Controller
         $monthlyTrend = Delivery::select(
                 DB::raw('MONTH(delivery_date) as month'),
                 DB::raw('COUNT(*) as deliveries'),
-                DB::raw('SUM(total_price) as revenue')
+                DB::raw('SUM(quantity) as cards'),
+                DB::raw('SUM(final_price) as revenue')
             )
             ->whereYear('delivery_date', now()->year)
             ->groupBy(DB::raw('MONTH(delivery_date)'))
             ->orderBy('month')
+            ->get();
+        
+        // Distribution par wilaya
+        $wilayaDistribution = Delivery::join('distributors', 'deliveries.distributor_id', '=', 'distributors.id')
+            ->select('distributors.wilaya', DB::raw('COUNT(*) as deliveries'), DB::raw('SUM(deliveries.quantity) as cards'))
+            ->groupBy('distributors.wilaya')
+            ->orderByDesc('deliveries')
             ->get();
         
         return response()->json([
@@ -423,6 +673,7 @@ class DashboardController extends Controller
                 'deliveries_by_status' => $deliveriesByStatus,
                 'payments_by_method' => $paymentsByMethod,
                 'monthly_trend' => $monthlyTrend,
+                'wilaya_distribution' => $wilayaDistribution,
             ]
         ]);
     }
@@ -443,11 +694,16 @@ class DashboardController extends Controller
                 $q->where('wilaya', $wilaya->wilaya);
             })->count();
             
+            $cards = Delivery::whereHas('distributor', function($q) use ($wilaya) {
+                $q->where('wilaya', $wilaya->wilaya);
+            })->sum('quantity');
+            
             $revenue = Delivery::whereHas('distributor', function($q) use ($wilaya) {
                 $q->where('wilaya', $wilaya->wilaya);
-            })->sum('total_price');
+            })->sum('final_price');
             
             $wilaya->deliveries_count = $deliveries;
+            $wilaya->total_cards = $cards;
             $wilaya->total_revenue = $revenue ?? 0;
         }
         
@@ -469,7 +725,8 @@ class DashboardController extends Controller
             ->select([
                 'distributors.*',
                 DB::raw('(SELECT COUNT(*) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as deliveries_count'),
-                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
+                DB::raw('(SELECT COALESCE(SUM(quantity), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_cards'),
+                DB::raw('(SELECT COALESCE(SUM(final_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
                 DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE payments.distributor_id = distributors.id) as total_paid')
             ])
             ->orderByDesc('deliveries_count')
@@ -495,7 +752,9 @@ class DashboardController extends Controller
         
         $topSchools = School::withCount('deliveries')
             ->addSelect([
-                'total_delivered' => Delivery::selectRaw('COALESCE(SUM(total_price), 0)')
+                'total_cards' => Delivery::selectRaw('COALESCE(SUM(quantity), 0)')
+                    ->whereColumn('school_id', 'schools.id'),
+                'total_delivered' => Delivery::selectRaw('COALESCE(SUM(final_price), 0)')
                     ->whereColumn('school_id', 'schools.id')
             ])
             ->orderByDesc('deliveries_count')
@@ -530,6 +789,44 @@ class DashboardController extends Controller
     }
     
     /**
+     * Statistiques de stock de cartes
+     */
+    public function cardsStock(Request $request)
+    {
+        $user = Auth::user();
+        $distributor = $user->distributorProfile;
+        
+        if (!$distributor) {
+            return response()->json(['success' => false, 'error' => 'Profil distributeur non trouvé.'], 404);
+        }
+        
+        $allocations = CardAllocation::where('distributor_id', $distributor->id)
+            ->with('cardType')
+            ->get();
+        
+        $stats = [
+            'total_allocated' => $allocations->sum('quantity'),
+            'total_used' => $allocations->sum('quantity_used'),
+            'total_available' => $allocations->sum('quantity') - $allocations->sum('quantity_used'),
+            'allocations' => $allocations->map(function($allocation) {
+                return [
+                    'card_type' => $allocation->cardType->name ?? 'Standard',
+                    'allocated' => $allocation->quantity,
+                    'used' => $allocation->quantity_used,
+                    'available' => $allocation->quantity - $allocation->quantity_used,
+                    'allocation_date' => $allocation->allocation_date,
+                    'expiry_date' => $allocation->expiry_date,
+                ];
+            }),
+        ];
+        
+        return response()->json([
+            'success' => true,
+            'data' => $stats
+        ]);
+    }
+    
+    /**
      * Helper: Get status color
      */
     private function getStatusColor($status)
@@ -538,6 +835,7 @@ class DashboardController extends Controller
             'pending' => '#FFA726', // Orange
             'in_progress' => '#29B6F6', // Blue
             'completed' => '#66BB6A', // Green
+            'confirmed' => '#66BB6A', // Green
             'cancelled' => '#EF5350', // Red
             'delivered' => '#66BB6A', // Green
             'paid' => '#66BB6A', // Green
