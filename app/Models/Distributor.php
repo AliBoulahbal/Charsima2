@@ -92,4 +92,12 @@ class Distributor extends Model
     {
         return $this->isActive() ? 'Actif' : 'Inactif';
     }
+
+    /**
+ * Calcul du nombre total de cartes livrées (Accessor)
+ */
+public function getTotalCardsAttribute()
+{
+    return $this->deliveries()->sum('quantity');
+}
 }

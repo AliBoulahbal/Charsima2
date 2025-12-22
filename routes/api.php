@@ -1,8 +1,9 @@
 <?php
+
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\SchoolController;
-use App\Http\Controllers\Api\DeliveryController;
+use App\Http\Controllers\Api\ApiDeliveryController; // Changé ici
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DashboardController2;
 use App\Http\Controllers\Api\PaymentController;
@@ -42,12 +43,17 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/payments', [PaymentController::class, 'index']);
     Route::post('/payments', [PaymentController::class, 'store']);
     
-    // Routes pour les écoles (si nécessaire)
+    // Routes pour les écoles
     Route::get('/schools', [SchoolController::class, 'index']);
     Route::post('/schools', [SchoolController::class, 'store']);
     
-    // Routes pour les livraisons (si nécessaire)
-    Route::get('/deliveries', [DeliveryController::class, 'index']);
-    Route::post('/deliveries', [DeliveryController::class, 'store']);
-    Route::post('/deliveries/storeWithLocation', [DeliveryController::class, 'storeWithLocation']);
+    // Routes pour les livraisons - Utilisez ApiDeliveryController
+    Route::prefix('deliveries')->group(function () {
+        Route::get('/', [ApiDeliveryController::class, 'index']);
+        Route::post('/', [ApiDeliveryController::class, 'store']);
+        Route::post('/storeWithLocation', [ApiDeliveryController::class, 'storeWithLocation']);
+        Route::get('/{id}', [ApiDeliveryController::class, 'show']);
+        Route::put('/{id}/status', [ApiDeliveryController::class, 'updateStatus']);
+        Route::get('/stats/summary', [ApiDeliveryController::class, 'getStats']);
+    });
 });

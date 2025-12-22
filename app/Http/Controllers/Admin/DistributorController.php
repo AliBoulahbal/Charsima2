@@ -9,208 +9,160 @@ use App\Models\Delivery;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class DistributorController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Liste des distributeurs avec calcul de stock temps réel.
      */
     public function index(Request $request)
     {
-        $query = Distributor::with(['user', 'payments']);
+        $query = Distributor::with(['user']);
         
-        // Recherche
-        if ($request->has('search')) {
+        // Système de recherche
+        if ($request->filled('search')) {
             $search = $request->input('search');
             $query->where(function($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('wilaya', 'like', "%{$search}%")
-                  ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhereHas('user', function($q) use ($search) {
-                      $q->where('email', 'like', "%{$search}%");
-                  });
+                  ->orWhere('phone', 'like', "%{$search}%");
             });
         }
         
-        // Filtre par wilaya
-        if ($request->has('wilaya')) {
+        // Filtre par Wilaya
+        if ($request->filled('wilaya')) {
             $query->where('wilaya', $request->input('wilaya'));
         }
         
+        // Requête avec calculs SQL optimisés
         $distributors = $query->select([
-                'distributors.*',
-                DB::raw('(SELECT COUNT(*) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as deliveries_count'),
-                // CORRECTION/COHÉRENCE: Utiliser final_price pour le montant livré (comme dans le modèle)
-                DB::raw('(SELECT COALESCE(SUM(final_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered'),
-                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE payments.distributor_id = distributors.id) as total_paid')
-            ])
-            ->orderByDesc('deliveries_count')
-            ->paginate(20); // CORRECTION: Utiliser paginate() pour l'affichage des liens
+            'distributors.*',
+            
+            // 1. TOTAL REÇUES (Tout le stock envoyé par le dépôt au distributeur)
+            DB::raw("(SELECT COALESCE(SUM(quantity), 0) FROM deliveries 
+                      WHERE deliveries.distributor_id = distributors.id) as total_received"),
+
+            // 2. TOTAL LIVRÉES (Uniquement les cartes sorties vers les écoles - status = 'delivered')
+            DB::raw("(SELECT COALESCE(SUM(quantity), 0) FROM deliveries 
+                      WHERE deliveries.distributor_id = distributors.id 
+                      AND status = 'delivered') as cards_delivered"),
+            
+            // 3. STATISTIQUES FINANCIÈRES
+            DB::raw('(SELECT COALESCE(SUM(final_price), 0) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as total_delivered_money'),
+            DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM payments WHERE payments.distributor_id = distributors.id) as total_paid_money'),
+            DB::raw('(SELECT COUNT(*) FROM deliveries WHERE deliveries.distributor_id = distributors.id) as deliveries_count')
+        ])
+        ->orderBy('name', 'asc')
+        ->paginate(20);
         
-        // La liste des wilayas pour le filtre (utilisée dans la vue index)
         $wilayas = $this->getWilayas();
         
         return view('admin.distributors.index', compact('distributors', 'wilayas'));
     }
 
     /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
-    {
-        $wilayas = $this->getWilayas();
-        // Charge les utilisateurs qui ont le rôle 'distributor' et n'ont pas encore de profil distributeur
-        $users = User::where('role', 'distributor')
-            ->whereDoesntHave('distributorProfile')
-            ->get();
-        
-        $distributor = new Distributor();
-
-        return view('admin.distributors.create', compact('wilayas', 'users', 'distributor'));
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'user_id' => 'required|exists:users,id|unique:distributors,user_id',
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'wilaya' => 'required|string|max:100',
-        ]);
-
-        Distributor::create($validated);
-
-        return redirect()->route('admin.distributors.index')
-            ->with('success', 'Distributeur créé avec succès.');
-    }
-
-    /**
-     * Display the specified resource.
+     * Fiche détaillée (Show) - Correction des variables Undefined
      */
     public function show(Distributor $distributor)
     {
-        // Chargement des relations pour les accesseurs et l'affichage des détails
-        $distributor->load(['user', 'deliveries.school', 'payments']);
-        
-        // Calcul des statistiques en utilisant les accesseurs du modèle (plus propre)
+        $distributor->load(['user']);
+
+        // Récupération des données pour les tableaux de bord
+        $recentDeliveries = $distributor->deliveries()->with('school')->latest()->limit(10)->get();
+        $recentPayments = $distributor->payments()->latest()->limit(10)->get();
+
+        // Calculs financiers pour les boîtes de statistiques
+        $total_delivered_money = $distributor->deliveries->sum('final_price');
+        $total_paid_money = $distributor->payments->sum('amount');
+
         $stats = [
-            'deliveries_count' => $distributor->total_deliveries,
-            'total_delivered' => $distributor->total_delivered_amount, 
-            'total_paid' => $distributor->total_paid_amount,
-            'remaining' => $distributor->total_remaining_amount,
+            'total_received'    => $distributor->deliveries->sum('quantity'),
+            'total_distributed' => $distributor->deliveries->where('status', 'delivered')->sum('quantity'),
+            'total_delivered'   => $total_delivered_money,
+            'total_paid'        => $total_paid_money,
+            'remaining'         => $total_delivered_money - $total_paid_money,
+            'deliveries_count'  => $distributor->deliveries->count(),
         ];
-        
-        // Livraisons récentes
-        $recentDeliveries = $distributor->deliveries()
-            ->with('school')
-            ->latest('delivery_date')
-            ->limit(10)
-            ->get();
-            
-        // Paiements récents
-        $recentPayments = $distributor->payments()
-            ->latest('payment_date')
-            ->limit(10)
-            ->get();
 
         return view('admin.distributors.show', compact('distributor', 'stats', 'recentDeliveries', 'recentPayments'));
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
+    public function create()
+    {
+        $wilayas = $this->getWilayas();
+        // Récupérer les utilisateurs "distributeur" qui n'ont pas encore de profil rattaché
+        $users = User::where('role', 'distributor')
+            ->whereNotExists(function($q) {
+                $q->select(DB::raw(1))->from('distributors')->whereRaw('distributors.user_id = users.id');
+            })->get();
+
+        return view('admin.distributors.create', compact('wilayas', 'users'));
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'user_id' => 'required|exists:users,id',
+            'wilaya' => 'required',
+            'phone' => 'nullable|string'
+        ]);
+
+        Distributor::create($request->all());
+
+        return redirect()->route('admin.distributors.index')->with('success', 'Distributeur créé avec succès.');
+    }
+
     public function edit(Distributor $distributor)
     {
         $wilayas = $this->getWilayas();
-        // CORRECTION CLÉ: Charger la liste des utilisateurs pour le formulaire (résout Undefined variable $users)
-        $users = User::orderBy('name')->get(); 
-        
+        $users = User::where('role', 'distributor')->get();
         return view('admin.distributors.edit', compact('distributor', 'wilayas', 'users'));
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, Distributor $distributor)
     {
-        $validated = $request->validate([
+        $request->validate([
             'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'wilaya' => 'required|string|max:100',
-            // Valider user_id en ignorant l'ID du distributeur actuel
-            'user_id' => 'nullable|exists:users,id|unique:distributors,user_id,' . $distributor->id,
+            'wilaya' => 'required',
         ]);
 
-        $distributor->update($validated);
+        $distributor->update($request->all());
 
-        // Mettre à jour aussi le nom de l'utilisateur associé (optionnel)
-        if ($distributor->user) {
-            $distributor->user->update(['name' => $validated['name']]);
-        }
-
-        return redirect()->route('admin.distributors.index')
-            ->with('success', 'Distributeur mis à jour avec succès.');
+        return redirect()->route('admin.distributors.index')->with('success', 'Distributeur mis à jour.');
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy(Distributor $distributor)
     {
-        // Vérifier s'il y a des livraisons ou paiements associés
-        if ($distributor->deliveries()->exists() || $distributor->payments()->exists()) {
-            return back()->with('error', 'Impossible de supprimer ce distributeur car il a des livraisons ou paiements associés.');
-        }
-        
         $distributor->delete();
-
-        return redirect()->route('admin.distributors.index')
-            ->with('success', 'Distributeur supprimé avec succès.');
+        return redirect()->route('admin.distributors.index')->with('success', 'Distributeur supprimé.');
     }
 
     /**
-     * Rapport financier du distributeur
+     * Rapport financier (Répare l'erreur Undefined variable $monthlyPayments)
      */
     public function financialReport(Distributor $distributor)
     {
-        $distributor->load(['deliveries.school', 'payments']);
-        
-        // Regrouper par mois
+        // Stats livraisons par mois
         $monthlyDeliveries = $distributor->deliveries()
-            ->select(
-                DB::raw('YEAR(delivery_date) as year'),
-                DB::raw('MONTH(delivery_date) as month'),
-                DB::raw('COUNT(*) as deliveries_count'),
-                DB::raw('SUM(quantity) as total_cards'),
-                DB::raw('SUM(final_price) as total_amount')
-            )
+            ->select(DB::raw('YEAR(delivery_date) as year, MONTH(delivery_date) as month, SUM(quantity) as total_cards, SUM(final_price) as total_amount'))
             ->whereNotNull('delivery_date')
             ->groupBy('year', 'month')
             ->orderBy('year', 'desc')
-            ->orderBy('month', 'desc')
             ->get();
             
+        // Stats paiements par mois (Correction erreur)
         $monthlyPayments = $distributor->payments()
-            ->select(
-                DB::raw('YEAR(payment_date) as year'),
-                DB::raw('MONTH(payment_date) as month'),
-                DB::raw('SUM(amount) as total_paid')
-            )
+            ->select(DB::raw('YEAR(payment_date) as year, MONTH(payment_date) as month, SUM(amount) as total_paid'))
             ->whereNotNull('payment_date')
             ->groupBy('year', 'month')
             ->orderBy('year', 'desc')
-            ->orderBy('month', 'desc')
             ->get();
 
         return view('admin.distributors.financial-report', compact('distributor', 'monthlyDeliveries', 'monthlyPayments'));
     }
 
-    /**
-     * Liste des wilayas
-     */
     private function getWilayas()
     {
         return [

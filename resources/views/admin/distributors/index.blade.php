@@ -3,112 +3,120 @@
 @section('page-title', 'Distributeurs')
 
 @section('page-actions')
-    <a href="{{ route('admin.distributors.create') }}" class="btn btn-primary">
+    <a href="{{ route('admin.distributors.create') }}" class="btn btn-primary shadow-sm">
         <i class="fas fa-plus"></i> Nouveau Distributeur
     </a>
 @endsection
 
 @section('content')
-<div class="card shadow">
+<div class="card shadow border-0">
     <div class="card-body">
+        
+        {{-- SECTION FILTRES --}}
         <div class="row mb-4">
-            <div class="col-md-4">
+            <div class="col-md-5">
                 <form method="GET" class="d-flex">
-                    <input type="text" name="search" class="form-control me-2" 
-                           placeholder="Rechercher..." value="{{ request('search') }}">
-                    <button type="submit" class="btn btn-outline-primary">
-                        <i class="fas fa-search"></i>
-                    </button>
+                    <div class="input-group">
+                        <input type="text" name="search" class="form-control" 
+                               placeholder="Rechercher un nom ou téléphone..." value="{{ request('search') }}">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
                 </form>
             </div>
             <div class="col-md-4">
-                <select class="form-select" name="wilaya" onchange="this.form.submit()">
-                    <option value="">Toutes les wilayas</option>
-                    @foreach($wilayas as $wilaya)
-                    <option value="{{ $wilaya }}" {{ request('wilaya') == $wilaya ? 'selected' : '' }}>
-                        {{ $wilaya }}
-                    </option>
-                    @endforeach
-                </select>
+                <form method="GET" id="filterForm">
+                    <select class="form-select" name="wilaya" onchange="this.form.submit()">
+                        <option value="">Toutes les wilayas</option>
+                        @foreach($wilayas as $wilaya)
+                        <option value="{{ $wilaya }}" {{ request('wilaya') == $wilaya ? 'selected' : '' }}>
+                            {{ $wilaya }}
+                        </option>
+                        @endforeach
+                    </select>
+                </form>
             </div>
         </div>
 
+        {{-- TABLEAU DES DISTRIBUTEURS --}}
         <div class="table-responsive">
-            {{-- AJOUT DE L'ID UNIQUE pour le ciblage JS --}}
-            <table class="table table-hover datatable" id="distributorsDataTable">
-                <thead>
+            <table class="table table-hover align-middle" id="distributorsDataTable">
+                <thead class="table-light">
                     <tr>
                         <th>ID</th>
-                        <th>Nom</th>
+                        <th>Nom du Distributeur</th>
                         <th>Wilaya</th>
-                        <th>Téléphone</th>
-                        <th>Livraisons</th>
-                        <th>Montant Livré</th>
-                        <th>Montant Payé</th>
-                        <th>Solde Dû</th>
-                        <th>Actions</th>
+                        <th class="text-center">Bons</th>
+                        <th class="text-center">Cartes Reçues</th> {{-- Stock envoyé par l'admin --}}
+                        <th class="text-center">Cartes Livrées</th> {{-- Ventes aux écoles --}}
+                        <th class="text-center">Disponible</th>    {{-- Stock en main --}}
+                        <th>Solde Dû (DA)</th>
+                        <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     @forelse($distributors as $distributor)
                     @php
-                        $total_delivered = $distributor->total_delivered ?? 0;
-                        $total_paid = $distributor->total_paid ?? 0;
-                        $total_due = $total_delivered - $total_paid;
+                        // Calcul financier
+                        $total_delivered_money = $distributor->total_delivered_money ?? 0;
+                        $total_paid_money = $distributor->total_paid_money ?? 0;
+                        $total_due = $total_delivered_money - $total_paid_money;
+                        
+                        // Calcul du stock : Ce qui est reçu par l'admin moins ce qui est livré aux écoles
+                        $disponible = ($distributor->total_received ?? 0) - ($distributor->cards_delivered ?? 0);
                     @endphp
                     <tr>
                         <td>{{ $distributor->id }}</td>
                         <td>
-                            <strong>{{ $distributor->name }}</strong>
-                            <br>
-                            <small class="text-muted">
-                                {{ $distributor->user->email ?? 'Pas de compte' }}
-                            </small>
+                            <div class="fw-bold text-dark">{{ $distributor->name }}</div>
+                            <small class="text-muted"><i class="fas fa-phone me-1"></i> {{ $distributor->phone ?? 'N/A' }}</small>
                         </td>
                         <td>
-                            <span class="badge bg-info">{{ $distributor->wilaya }}</span>
+                            <span class="badge bg-light text-dark border">{{ $distributor->wilaya }}</span>
                         </td>
-                        <td>{{ $distributor->phone ?? 'N/A' }}</td>
-                        <td>
-                            <span class="badge bg-{{ $distributor->deliveries_count > 0 ? 'success' : 'secondary' }}">
-                                {{ $distributor->deliveries_count }}
-                            </span>
+                        <td class="text-center">
+                            <span class="badge bg-secondary rounded-pill">{{ $distributor->deliveries_count }}</span>
                         </td>
-                        <td>
-                            <span class="text-primary fw-bold">
-                                {{ number_format($total_delivered, 0, ',', ' ') }} DA
-                            </span>
+                        
+                        {{-- Indicateurs de Stock --}}
+                        <td class="text-center fw-bold">
+                            {{ number_format($distributor->total_received ?? 0, 0, ',', ' ') }}
                         </td>
-                        <td>
-                            <span class="text-success fw-bold">
-                                {{ number_format($total_paid, 0, ',', ' ') }} DA
-                            </span>
+                        <td class="text-center fw-bold text-success">
+                            {{ number_format($distributor->cards_delivered ?? 0, 0, ',', ' ') }}
                         </td>
+                        <td class="text-center">
+                            @if($disponible > 0)
+                                <span class="badge bg-primary fs-6">{{ number_format($disponible, 0, ',', ' ') }}</span>
+                            @elseif($disponible < 0)
+                                <span class="badge bg-danger fs-6">{{ number_format($disponible, 0, ',', ' ') }}</span>
+                            @else
+                                <span class="badge bg-warning text-dark fs-6">0</span>
+                            @endif
+                        </td>
+
+                        {{-- Situation Financière --}}
                         <td>
                             <span class="fw-bold {{ $total_due > 0 ? 'text-danger' : 'text-success' }}">
-                                {{ number_format($total_due, 0, ',', ' ') }} DA
+                                {{ number_format($total_due, 0, ',', ' ') }}
                             </span>
                         </td>
-                        <td>
-                            <div class="btn-group">
-                                <a href="{{ route('admin.distributors.show', $distributor) }}" 
-                                   class="btn btn-sm btn-info" title="Voir">
+
+                        <td class="text-end">
+                            <div class="btn-group shadow-sm">
+                                <a href="{{ route('admin.distributors.show', $distributor) }}" class="btn btn-sm btn-outline-info" title="Voir les détails">
                                     <i class="fas fa-eye"></i>
                                 </a>
-                                <a href="{{ route('admin.distributors.edit', $distributor) }}" 
-                                   class="btn btn-sm btn-warning" title="Modifier">
-                                    <i class="fas fa-edit"></i>
-                                </a>
-                                {{-- LA ROUTE financial-report EST MAINTENANT DÉFINIE DANS web.php --}}
-                                <a href="{{ route('admin.distributors.financial-report', $distributor) }}" 
-                                   class="btn btn-sm btn-success" title="Rapport financier">
+                                <a href="{{ route('admin.distributors.financial-report', $distributor) }}" class="btn btn-sm btn-outline-success" title="Rapport financier">
                                     <i class="fas fa-file-invoice-dollar"></i>
                                 </a>
-                                <form action="{{ route('admin.distributors.destroy', $distributor) }}" 
-                                      method="POST" class="d-inline" onsubmit="return confirmDelete(event)">
-                                    @csrf
-                                    @method('DELETE')
-                                    <button type="submit" class="btn btn-sm btn-danger" title="Supprimer">
+                                <a href="{{ route('admin.distributors.edit', $distributor) }}" class="btn btn-sm btn-outline-warning" title="Modifier">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                <form action="{{ route('admin.distributors.destroy', $distributor) }}" method="POST" class="d-inline" onsubmit="return confirm('Attention : Toutes les données liées à ce distributeur seront supprimées. Confirmer ?')">
+                                    @csrf @method('DELETE')
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="fas fa-trash"></i>
                                     </button>
                                 </form>
@@ -116,12 +124,10 @@
                         </td>
                     </tr>
                     @empty
-                    <tr class="dataTables_empty">
-                        <td colspan="9" class="text-center">
-                            <div class="py-4 text-muted">
-                                <i class="fas fa-truck fa-2x mb-3"></i>
-                                <p>Aucun distributeur trouvé</p>
-                            </div>
+                    <tr>
+                        <td colspan="9" class="text-center py-5 text-muted">
+                            <i class="fas fa-info-circle fa-2x mb-3"></i><br>
+                            Aucun distributeur trouvé pour vos critères.
                         </td>
                     </tr>
                     @endforelse
@@ -129,43 +135,9 @@
             </table>
         </div>
 
-        <div class="row mt-4">
-            <div class="col-md-3">
-                <div class="card bg-primary text-white">
-                    <div class="card-body text-center">
-                        <h4>{{ $distributors->count() }}</h4>
-                        <small>Distributeurs</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-success text-white">
-                    <div class="card-body text-center">
-                        <h4>{{ number_format($distributors->sum('total_delivered'), 0, ',', ' ') }} DA</h4>
-                        <small>Total Livré</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-info text-white">
-                    <div class="card-body text-center">
-                        <h4>{{ number_format($distributors->sum('total_paid'), 0, ',', ' ') }} DA</h4>
-                        <small>Total Payé</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-danger text-white">
-                    <div class="card-body text-center">
-                        <h4>{{ number_format($distributors->sum('total_delivered') - $distributors->sum('total_paid'), 0, ',', ' ') }} DA</h4>
-                        <small>Solde Dû</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="d-flex justify-content-center mt-3">
-            {{ $distributors->links() }}
+        {{-- Pagination Laravel --}}
+        <div class="d-flex justify-content-center mt-4">
+            {{ $distributors->appends(request()->query())->links() }}
         </div>
     </div>
 </div>
@@ -174,35 +146,16 @@
 @push('scripts')
 <script>
     $(document).ready(function() {
-        var tableSelector = '#distributorsDataTable'; 
-        
-        // VÉRIFIER L'INSTANCE AVANT INITIALISATION
-        if ( ! $.fn.DataTable.isDataTable( tableSelector ) ) {
-            $(tableSelector).DataTable({
-                language: {
-                    url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/fr-FR.json'
-                },
-                // --- OPTIONS D'ISOLATION ET DE STABILITÉ ---
-                destroy: true, // Force la destruction d'une ancienne instance
-                autoWidth: false, // Désactive le calcul automatique des largeurs
-                
-                // Désactiver les fonctionnalités DataTables en conflit avec la pagination Laravel
+        // Initialisation DataTables si nécessaire
+        if ($.fn.DataTable && !$.fn.DataTable.isDataTable('#distributorsDataTable')) {
+            $('#distributorsDataTable').DataTable({
+                language: { url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/fr-FR.json' },
                 paging: false,
                 searching: false,
-                ordering: false,
                 info: false,
-                
-                // FORCER LE COMPTE DE 9 COLONNES
-                columns: [
-                    null, // 1. ID
-                    null, // 2. Nom
-                    null, // 3. Wilaya
-                    null, // 4. Téléphone
-                    null, // 5. Livraisons
-                    null, // 6. Montant Livré
-                    null, // 7. Montant Payé
-                    null, // 8. Solde Dû
-                    { orderable: false, searchable: false } // 9. Actions
+                ordering: true,
+                columnDefs: [
+                    { targets: [8], orderable: false } // Désactiver tri sur colonne Actions
                 ]
             });
         }
