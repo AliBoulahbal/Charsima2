@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\SchoolController;
-use App\Http\Controllers\Api\ApiDeliveryController; // Changé ici
+use App\Http\Controllers\Api\ApiDeliveryController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DashboardController2;
 use App\Http\Controllers\Api\PaymentController;
@@ -21,13 +21,13 @@ Route::middleware('auth:sanctum')->group(function () {
     
     // Dashboard routes
     Route::get('/dashboard/distributor-stats', [DashboardController2::class, 'distributorDashboard']);
-    Route::get('/dashboard/stats', [DashboardController::class, 'distributorStats']);
+    Route::get('/dashboard/stats', [DashboardController2::class, 'distributorStats']);
     
     // Statistiques détaillées
-    Route::get('/dashboard/cards-stats', [DashboardController::class, 'cardsStats']);
-    Route::get('/dashboard/monthly-summary', [DashboardController::class, 'monthlySummary']);
-    Route::get('/dashboard/my-activity', [DashboardController::class, 'myActivity']);
-    Route::get('/dashboard/cards-stock', [DashboardController::class, 'cardsStock']);
+    Route::get('/dashboard/cards-stats', [DashboardController2::class, 'cardsStats']);
+    Route::get('/dashboard/monthly-summary', [DashboardController2::class, 'monthlySummary']);
+    Route::get('/dashboard/my-activity', [DashboardController2::class, 'myActivity']);
+    Route::get('/dashboard/cards-stock', [DashboardController2::class, 'cardsStock']);
     
     // Admin routes
     Route::get('/dashboard/admin-stats', [DashboardController::class, 'adminStats'])->middleware('role:admin,super_admin');
@@ -36,18 +36,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard/top-distributors', [DashboardController::class, 'topDistributors'])->middleware('role:admin,super_admin');
     Route::get('/dashboard/top-schools', [DashboardController::class, 'topSchools'])->middleware('role:admin,super_admin');
     
-    // Wilayas
-    Route::get('/wilayas', [DashboardController::class, 'getWilayas']);
+    // Wilayas - MODIFIEZ CETTE LIGNE :
+    // Route::get('/wilayas', [DashboardController::class, 'getWilayas']); // À SUPPRIMER
+    
+    // Ajoutez les routes des écoles AVANT les autres
+    Route::prefix('schools')->group(function () {
+        Route::get('/', [SchoolController::class, 'index']);
+        Route::post('/', [SchoolController::class, 'store']);
+        Route::post('/distributor-store', [SchoolController::class, 'distributorStore']);
+        Route::get('/wilayas', [SchoolController::class, 'getWilayas']); // <-- IMPORTANT
+        Route::get('/communes', [SchoolController::class, 'getCommunesByWilaya']); // <-- IMPORTANT
+    });
     
     // Routes pour les paiements
     Route::get('/payments', [PaymentController::class, 'index']);
     Route::post('/payments', [PaymentController::class, 'store']);
     
-    // Routes pour les écoles
-    Route::get('/schools', [SchoolController::class, 'index']);
-    Route::post('/schools', [SchoolController::class, 'store']);
-    
-    // Routes pour les livraisons - Utilisez ApiDeliveryController
+    // Routes pour les livraisons
     Route::prefix('deliveries')->group(function () {
         Route::get('/', [ApiDeliveryController::class, 'index']);
         Route::post('/', [ApiDeliveryController::class, 'store']);

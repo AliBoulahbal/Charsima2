@@ -13,151 +13,134 @@ use Illuminate\Support\Facades\DB;
 class ApiDeliveryController extends Controller
 {
     /**
-     * Display a listing of the deliveries for API.
+     * Liste des livraisons (Filtrée par rôle)
      */
     public function index(Request $request)
-    {
-        try {
-            $user = Auth::user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Non authentifié'
-                ], 401);
-            }
-
-            $query = Delivery::query();
-            
-            // Si l'utilisateur est un distributeur, ne montrer que ses livraisons
-            if ($user->role === 'distributor' && $user->distributor_id) {
-                $query->where('distributor_id', $user->distributor_id);
-            }
-            
-            // Filtrer par wilaya si spécifié
-            if ($request->has('wilaya')) {
-                $query->where('wilaya', $request->wilaya);
-            }
-            
-            // Filtrer par statut
-            if ($request->has('status')) {
-                $query->where('status', $request->status);
-            }
-            
-            // Filtrer par date
-            if ($request->has('date_from')) {
-                $query->whereDate('delivery_date', '>=', $request->date_from);
-            }
-            
-            if ($request->has('date_to')) {
-                $query->whereDate('delivery_date', '<=', $request->date_to);
-            }
-
-            $deliveries = $query->with(['school:id,name,wilaya,commune', 'distributor:id,name'])
-                ->latest('delivery_date')
-                ->get();
-
-            return response()->json([
-                'success' => true,
-                'deliveries' => $deliveries,
-                'total' => $deliveries->count()
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Store a newly created delivery with location for API.
-     */
-    public function storeWithLocation(Request $request)
 {
-    $validated = $request->validate([
-        'school_id' => 'required|exists:schools,id',
-        'quantity' => 'required|integer|min:1',
-        'unit_price' => 'required|numeric|min:0',
-        'final_price' => 'required|numeric|min:0',
-        'delivery_date' => 'required|date',
-        'latitude' => 'required|numeric',
-        'longitude' => 'required|numeric',
-        'status' => 'required|string',
-        'distributor_id' => 'required|exists:users,id', // Important
-    ]);
+    try {
+        $user = Auth::user();
+        
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Non authentifié'], 401);
+        }
 
-    $delivery = Delivery::create([
-        'school_id' => $validated['school_id'],
-        'distributor_id' => $validated['distributor_id'], // Assurez-vous que ce champ existe
-        'quantity' => $validated['quantity'],
-        'unit_price' => $validated['unit_price'],
-        'final_price' => $validated['final_price'],
-        'delivery_date' => $validated['delivery_date'],
-        'latitude' => $validated['latitude'],
-        'longitude' => $validated['longitude'],
-        'status' => $validated['status'],
-    ]);
+        $query = Delivery::query();
+        
+        // Filtre automatique pour les distributeurs
+        if ($user->role === 'distributor') {
+            $distributorId = $user->distributorProfile ? $user->distributorProfile->id : null;
+            if ($distributorId) {
+                $query->where('distributor_id', $distributorId);
+            }
+        }
+        
+        // Autres filtres (Wilaya, Statut, Dates)
+        if ($request->filled('wilaya')) $query->where('wilaya', $request->wilaya);
+        if ($request->filled('status')) $query->where('status', $request->status);
+        if ($request->filled('date_from')) $query->whereDate('delivery_date', '>=', $request->date_from);
+        if ($request->filled('date_to')) $query->whereDate('delivery_date', '<=', $request->date_to);
 
-    return response()->json([
-        'success' => true,
-        'message' => 'Livraison enregistrée avec succès',
-        'delivery' => $delivery
-    ], 201);
+        $deliveries = $query->with(['school:id,name,wilaya,commune', 'distributor:id,name', 'payments'])
+            ->latest('delivery_date')
+            ->get();
+
+        // Transformer les données pour inclure les soldes calculés
+        $transformedDeliveries = $deliveries->map(function ($delivery) {
+            // Calculer le montant total payé
+            $paidAmount = $delivery->payments->sum('amount');
+            
+            // Calculer le solde restant
+            $remainingAmount = max(0, $delivery->final_price - $paidAmount);
+            
+            return [
+                'id' => $delivery->id,
+                'school_id' => $delivery->school_id,
+                'distributor_id' => $delivery->distributor_id,
+                'delivery_date' => $delivery->delivery_date,
+                'quantity' => $delivery->quantity,
+                'unit_price' => $delivery->unit_price,
+                'total_price' => $delivery->total_price,
+                'final_price' => $delivery->final_price,
+                'paid_amount' => (float) $paidAmount,
+                'remaining_amount' => (float) $remainingAmount,
+                'payment_status' => $remainingAmount > 0 ? 'unpaid' : 'paid',
+                'status' => $delivery->status,
+                'transaction_id' => $delivery->transaction_id,
+                'payment_method' => $delivery->payment_method,
+                'wilaya' => $delivery->wilaya,
+                'latitude' => $delivery->latitude,
+                'longitude' => $delivery->longitude,
+                'location_validated' => $delivery->location_validated,
+                'school' => $delivery->school,
+                'distributor' => $delivery->distributor,
+                'created_at' => $delivery->created_at,
+                'updated_at' => $delivery->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'deliveries' => $transformedDeliveries,
+            'total' => $deliveries->count()
+        ]);
+
+    } catch (\Exception $e) {
+        return response()->json(['success' => false, 'message' => 'Erreur: ' . $e->getMessage()], 500);
+    }
 }
 
     /**
-     * Store a simple delivery (without location) for API.
+     * Enregistrement d'une livraison (Fusion de la logique avec calcul auto)
      */
-    public function store(Request $request)
+    public function storeWithLocation(Request $request)
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Non authentifié'
-                ], 401);
+
+            // 1. Calcul automatique du prix final si absent
+            if (!$request->has('final_price') && $request->has(['quantity', 'unit_price'])) {
+                $request->merge([
+                    'final_price' => $request->quantity * $request->unit_price
+                ]);
             }
 
+            // 2. Validation
             $validator = Validator::make($request->all(), [
-                'school_id' => 'required|exists:schools,id',
-                'quantity' => 'required|integer|min:1',
-                'unit_price' => 'required|numeric|min:0',
+                'school_id'     => 'required|exists:schools,id',
+                'quantity'      => 'required|integer|min:1',
+                'unit_price'    => 'required|numeric|min:0',
+                'final_price'   => 'required|numeric|min:0',
                 'delivery_date' => 'required|date',
+                'latitude'      => 'nullable|numeric',
+                'longitude'     => 'nullable|numeric',
+                'status'        => 'nullable|string|in:pending,completed,cancelled',
             ]);
 
             if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation error',
-                    'errors' => $validator->errors()
-                ], 422);
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            $school = School::find($request->school_id);
-            if (!$school) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'École non trouvée'
-                ], 404);
+            // 3. Identification du distributeur
+            // On utilise le profil lié à l'utilisateur connecté
+            $distributorId = $user->distributorProfile ? $user->distributorProfile->id : $request->distributor_id;
+
+            if (!$distributorId) {
+                return response()->json(['success' => false, 'message' => 'Profil distributeur introuvable'], 404);
             }
 
-            $totalPrice = $request->quantity * $request->unit_price;
-
+            // 4. Création
             $delivery = Delivery::create([
-                'school_id' => $request->school_id,
-                'distributor_id' => $user->distributor_id,
-                'quantity' => $request->quantity,
-                'unit_price' => $request->unit_price,
-                'total_price' => $totalPrice,
-                'final_price' => $totalPrice,
-                'delivery_date' => $request->delivery_date,
-                'status' => 'completed',
-                'delivery_type' => 'school',
-                'wilaya' => $school->wilaya,
+                'school_id'      => $request->school_id,
+                'distributor_id' => $distributorId,
+                'quantity'       => $request->quantity,
+                'unit_price'     => $request->unit_price,
+                'total_price'    => $request->final_price, // On remplit les deux pour la sécurité
+                'final_price'    => $request->final_price,
+                'delivery_date'  => $request->delivery_date,
+                'latitude'       => $request->latitude,
+                'longitude'      => $request->longitude,
+                'status'         => $request->status ?? 'pending',
+                'wilaya'         => School::find($request->school_id)->wilaya ?? null,
             ]);
 
             return response()->json([
@@ -167,187 +150,67 @@ class ApiDeliveryController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 
     /**
-     * Display the specified delivery for API.
+     * Détails d'une livraison
      */
     public function show($id)
     {
-        try {
-            $user = Auth::user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Non authentifié'
-                ], 401);
-            }
-
-            $delivery = Delivery::with(['school', 'distributor'])->find($id);
-            
-            if (!$delivery) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Livraison non trouvée'
-                ], 404);
-            }
-
-            // Vérifier les permissions
-            if ($user->role === 'distributor' && $delivery->distributor_id !== $user->distributor_id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Accès non autorisé'
-                ], 403);
-            }
-
-            return response()->json([
-                'success' => true,
-                'delivery' => $delivery
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage()
-            ], 500);
+        $delivery = Delivery::with(['school', 'distributor'])->find($id);
+        
+        if (!$delivery) {
+            return response()->json(['success' => false, 'message' => 'Livraison non trouvée'], 404);
         }
+
+        return response()->json(['success' => true, 'delivery' => $delivery]);
     }
 
     /**
-     * Update delivery status for API.
+     * Mise à jour du statut
      */
     public function updateStatus(Request $request, $id)
     {
-        try {
-            $user = Auth::user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Non authentifié'
-                ], 401);
-            }
+        $request->validate([
+            'status' => 'required|string|in:pending,completed,cancelled',
+        ]);
 
-            $validator = Validator::make($request->all(), [
-                'status' => 'required|string|in:pending,completed,cancelled',
-            ]);
+        $delivery = Delivery::find($id);
+        if (!$delivery) return response()->json(['success' => false, 'message' => 'Introuvable'], 404);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation error',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
+        $delivery->update(['status' => $request->status]);
 
-            $delivery = Delivery::find($id);
-            
-            if (!$delivery) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Livraison non trouvée'
-                ], 404);
-            }
-
-            // Vérifier les permissions
-            if ($user->role === 'distributor' && $delivery->distributor_id !== $user->distributor_id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Accès non autorisé'
-                ], 403);
-            }
-
-            $delivery->update([
-                'status' => $request->status
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Statut mis à jour avec succès',
-                'delivery' => $delivery
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json(['success' => true, 'delivery' => $delivery]);
     }
 
     /**
-     * Get delivery statistics for API dashboard.
+     * Statistiques globales et mensuelles
      */
     public function getStats()
     {
         try {
             $user = Auth::user();
-            
-            if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Non authentifié'
-                ], 401);
-            }
-
             $query = Delivery::query();
             
-            // Si l'utilisateur est un distributeur, filtrer ses livraisons
-            if ($user->role === 'distributor' && $user->distributor_id) {
-                $query->where('distributor_id', $user->distributor_id);
+            if ($user->role === 'distributor') {
+                $distributorId = $user->distributorProfile ? $user->distributorProfile->id : null;
+                if ($distributorId) $query->where('distributor_id', $distributorId);
             }
 
-            $totalDeliveries = $query->count();
-            $completedDeliveries = $query->where('status', 'completed')->count();
-            $pendingDeliveries = $query->where('status', 'pending')->count();
-            $totalAmount = $query->sum('final_price');
-            $totalCards = $query->sum('quantity');
-            
-            // Statistiques du mois en cours
-            $currentMonth = now()->month;
-            $currentYear = now()->year;
-            
-            $monthlyStats = $query->whereMonth('delivery_date', $currentMonth)
-                ->whereYear('delivery_date', $currentYear)
-                ->select(
-                    DB::raw('COUNT(*) as deliveries_count'),
-                    DB::raw('SUM(quantity) as cards_count'),
-                    DB::raw('SUM(final_price) as amount')
-                )
-                ->first();
+            $stats = [
+                'total_deliveries'     => (int) $query->count(),
+                'completed_deliveries' => (int) $query->where('status', 'completed')->count(),
+                'total_amount'         => (float) $query->sum('final_price'),
+                'total_cards'          => (int) $query->sum('quantity'),
+                'recent_deliveries'    => $query->with('school:id,name')->latest()->limit(5)->get(),
+            ];
 
-            // Dernières livraisons
-            $recentDeliveries = $query->with('school:id,name')
-                ->latest('delivery_date')
-                ->limit(5)
-                ->get(['id', 'school_id', 'delivery_date', 'quantity', 'final_price', 'status']);
-
-            return response()->json([
-                'success' => true,
-                'stats' => [
-                    'total_deliveries' => $totalDeliveries,
-                    'completed_deliveries' => $completedDeliveries,
-                    'pending_deliveries' => $pendingDeliveries,
-                    'total_amount' => (float) $totalAmount,
-                    'total_cards' => $totalCards,
-                    'monthly_deliveries' => $monthlyStats->deliveries_count ?? 0,
-                    'monthly_cards' => $monthlyStats->cards_count ?? 0,
-                    'monthly_amount' => (float) ($monthlyStats->amount ?? 0),
-                    'recent_deliveries' => $recentDeliveries
-                ]
-            ]);
+            return response()->json(['success' => true, 'stats' => $stats]);
 
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur serveur: ' . $e->getMessage()
-            ], 500);
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
 }

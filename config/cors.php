@@ -1,33 +1,21 @@
 <?php
 
+// config/cors.php
 return [
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'logout', 'user'],
-    
-    'allowed_methods' => ['*'],
-    
-    'allowed_origins' => ['*'],
-    
+    'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'logout'],
+
+    'allowed_methods' => ['*'], // Autorise POST, GET, OPTIONS, etc.
+
+    // Remplacez par '*' pour le développement ou l'URL précise de Flutter
+    'allowed_origins' => ['*'], 
+
     'allowed_origins_patterns' => [],
-    
-    'allowed_headers' => [
-        'Content-Type',
-        'X-Auth-Token',
-        'Origin',
-        'Authorization',
-        'X-Requested-With',
-        'X-CSRF-TOKEN',
-        'Accept',
-        'Device-Name',
-        'X-XSRF-TOKEN',
-    ],
-    
-    'exposed_headers' => [
-        'Authorization',
-        'X-CSRF-TOKEN',
-        'X-XSRF-TOKEN',
-    ],
-    
+
+    'allowed_headers' => ['*'], // Très important pour Authorization et Content-Type
+
+    'exposed_headers' => [],
+
     'max_age' => 0,
-    
+
     'supports_credentials' => true,
 ];
