@@ -371,25 +371,27 @@ class SchoolController extends Controller
     /**
      * Obtenir les communes par wilaya
      */
-    public function getCommunesByWilaya(Request $request)
+    public function getCommunesByWilaya($wilaya)
     {
-        $request->validate([
-            'wilaya' => 'required|string',
-        ]);
-        
-        $communes = School::where('wilaya', $request->wilaya)
-            ->select('commune')
-            ->distinct()
-            ->orderBy('commune')
-            ->pluck('commune');
-        
-        return response()->json([
-            'success' => true,
-            'communes' => $communes,
-            'wilaya' => $request->wilaya,
-        ]);
+        try {
+            $communes = School::where('wilaya', $wilaya)
+                ->select('commune')
+                ->distinct()
+                ->orderBy('commune')
+                ->pluck('commune');
+            
+            return response()->json([
+                'success' => true,
+                'communes' => $communes,
+                'wilaya' => $wilaya,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur: ' . $e->getMessage()
+            ], 500);
+        }
     }
-
     /**
      * Statistiques des écoles (pour admin)
      */

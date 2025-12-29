@@ -55,8 +55,12 @@ class UserController extends Controller
             'phone' => $validated['phone'] ?? null,
         ]);
 
-        // Assigner le rôle Spatie
-        $user->assignRole($validated['role']);
+        // Assigner le rôle Spatie (avec création si nécessaire)
+        $role = Role::firstOrCreate([
+            'name' => $validated['role'],
+            'guard_name' => 'web'
+        ]);
+        $user->assignRole($role);
 
         // Si c'est un distributeur, créer le profil
         if ($validated['role'] === 'distributor') {
@@ -76,11 +80,10 @@ class UserController extends Controller
      * Display the specified resource.
      */
     public function show(User $user)
-{
-    // Assurez-vous d'inclure 'kiosk'
-    $user->load(['roles', 'distributorProfile', 'kiosk', 'deliveries', 'payments']); 
-    return view('admin.users.show', compact('user'));
-}
+    {
+        $user->load(['roles', 'distributorProfile', 'kiosk', 'deliveries', 'payments']);
+        return view('admin.users.show', compact('user'));
+    }
 
     /**
      * Show the form for editing the specified resource.
@@ -121,8 +124,12 @@ class UserController extends Controller
         
         $user->save();
 
-        // Mettre à jour les rôles Spatie
-        $user->syncRoles([$validated['role']]);
+        // Mettre à jour les rôles Spatie (créer le rôle si nécessaire)
+        $role = Role::firstOrCreate([
+            'name' => $validated['role'],
+            'guard_name' => 'web'
+        ]);
+        $user->syncRoles([$role]);
 
         // Gérer le profil distributeur
         if ($validated['role'] === 'distributor') {
@@ -171,10 +178,16 @@ class UserController extends Controller
     public function assignRole(Request $request, User $user)
     {
         $request->validate([
-            'role' => 'required|string|exists:roles,name'
+            'role' => 'required|string'
         ]);
 
-        $user->syncRoles([$request->role]);
+        // Créer le rôle s'il n'existe pas
+        $role = Role::firstOrCreate([
+            'name' => $request->role,
+            'guard_name' => 'web'
+        ]);
+        
+        $user->syncRoles([$role]);
         $user->update(['role' => $request->role]);
 
         return back()->with('success', 'Rôle assigné avec succès.');
